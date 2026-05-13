@@ -27,6 +27,12 @@ struct WebviewPreferences {
     bool *JavaScriptCanOpenWindowsAutomatically;
     double *MinimumFontSize;
     bool *EnableAutoplayWithoutUserAction;
+    // KeepRunningWhenHidden, when set, selects
+    // `WKPreferences.inactiveSchedulingPolicy` (macOS 14+):
+    //   true  -> WKInactiveSchedulingPolicyNone
+    //   false -> WKInactiveSchedulingPolicyThrottle
+    // When NULL, WebKit's default (WKInactiveSchedulingPolicySuspend) applies.
+    bool *KeepRunningWhenHidden;
 };
 
 struct PanelPreferences {
@@ -172,6 +178,21 @@ void* windowNew(unsigned int id, int width, int height, bool fraudulentWebsiteWa
 	if (preferences.MinimumFontSize != NULL) {
 		config.preferences.minimumFontSize = *preferences.MinimumFontSize;
 	}
+	// `inactiveSchedulingPolicy` is part of the WKWebViewConfiguration, which
+	// the WKWebView copies when it is allocated, so it is assigned here and is
+	// fixed for the WebView's lifetime. Under WebKit's default (Suspend), a
+	// WebView in a window that has never been shown does not run its timers at
+	// all; None and Throttle keep it running, throttled.
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
+	if (@available(macOS 14.0, *)) {
+		if (preferences.KeepRunningWhenHidden != NULL) {
+			config.preferences.inactiveSchedulingPolicy = *preferences.KeepRunningWhenHidden
+				? WKInactiveSchedulingPolicyNone
+				: WKInactiveSchedulingPolicyThrottle;
+		}
+	}
+#endif
+
 	config.suppressesIncrementalRendering = true;
 	if (applicationNameForUserAgent != NULL && applicationNameForUserAgent[0] != '\0') {
 		config.applicationNameForUserAgent = [NSString stringWithUTF8String:applicationNameForUserAgent];
@@ -1616,6 +1637,9 @@ func (w *macosWebviewWindow) getWebviewPreferences() C.struct_WebviewPreferences
 	}
 	if wvprefs.EnableAutoplayWithoutUserAction.IsSet() {
 		result.EnableAutoplayWithoutUserAction = bool2CboolPtr(wvprefs.EnableAutoplayWithoutUserAction.Get())
+	}
+	if wvprefs.KeepRunningWhenHidden.IsSet() {
+		result.KeepRunningWhenHidden = bool2CboolPtr(wvprefs.KeepRunningWhenHidden.Get())
 	}
 
 	return result
