@@ -783,6 +783,18 @@ type MacWebviewPreferences struct {
 	// EnableAutoplayWithoutUserAction allows media to start playing automatically
 	// without requiring a user gesture. Maps to WKWebViewConfiguration.mediaTypesRequiringUserActionForPlayback.
 	EnableAutoplayWithoutUserAction optional.Bool
+	// KeepRunningWhenHidden controls WKPreferences.inactiveSchedulingPolicy
+	// (macOS 14+ / iOS 17+). When true the WebView's JS event loop is not
+	// throttled while the window is hidden (WKInactiveSchedulingPolicyNone).
+	// When false it is explicitly throttled (WKInactiveSchedulingPolicyThrottle).
+	// When unset the platform default (automatic) is preserved.
+	//
+	// Setting this is useful for hidden background WebViews that must keep
+	// running JS — e.g. a headless WebView that handles network or tool
+	// execution while the main window is the user's only visible UI. macOS
+	// otherwise reduces hidden WebViews' scheduling all the way to 0Hz, which
+	// can starve scheduled timers and pending fetches.
+	KeepRunningWhenHidden optional.Bool
 }
 
 // MacTitleBar contains options for the Mac titlebar

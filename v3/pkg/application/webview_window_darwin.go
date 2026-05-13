@@ -26,6 +26,12 @@ struct WebviewPreferences {
     bool *JavaScriptCanOpenWindowsAutomatically;
     double *MinimumFontSize;
     bool *EnableAutoplayWithoutUserAction;
+    // KeepRunningWhenHidden, when set, controls
+    // `WKPreferences.inactiveSchedulingPolicy` (macOS 14+ / iOS 17+):
+    //   true  -> WKInactiveSchedulingPolicyNone (do not throttle JS when hidden)
+    //   false -> WKInactiveSchedulingPolicyThrottle (explicit throttle)
+    // When NULL the platform default (automatic) is preserved.
+    bool *KeepRunningWhenHidden;
 };
 
 struct PanelPreferences {
@@ -171,6 +177,23 @@ void* windowNew(unsigned int id, int width, int height, bool fraudulentWebsiteWa
 	if (preferences.MinimumFontSize != NULL) {
 		config.preferences.minimumFontSize = *preferences.MinimumFontSize;
 	}
+	// `inactiveSchedulingPolicy` is read at navigation time from the
+	// WKWebViewConfiguration's preferences, so it must be assigned BEFORE the
+	// WKWebView is allocated. Assigning it on an already-created WebView is a
+	// silent no-op — without setting it here, a Hidden:true window's JS event
+	// loop is throttled to 0Hz by macOS once the app has any other active
+	// window. Opting in via KeepRunningWhenHidden lets background WebViews
+	// keep running (e.g. for headless tool execution).
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
+	if (@available(macOS 14.0, *)) {
+		if (preferences.KeepRunningWhenHidden != NULL) {
+			config.preferences.inactiveSchedulingPolicy = *preferences.KeepRunningWhenHidden
+				? WKInactiveSchedulingPolicyNone
+				: WKInactiveSchedulingPolicyThrottle;
+		}
+	}
+#endif
+
 	config.suppressesIncrementalRendering = true;
 	if (applicationNameForUserAgent != NULL && applicationNameForUserAgent[0] != '\0') {
 		config.applicationNameForUserAgent = [NSString stringWithUTF8String:applicationNameForUserAgent];
@@ -1604,6 +1627,9 @@ func (w *macosWebviewWindow) getWebviewPreferences() C.struct_WebviewPreferences
 	}
 	if wvprefs.EnableAutoplayWithoutUserAction.IsSet() {
 		result.EnableAutoplayWithoutUserAction = bool2CboolPtr(wvprefs.EnableAutoplayWithoutUserAction.Get())
+	}
+	if wvprefs.KeepRunningWhenHidden.IsSet() {
+		result.KeepRunningWhenHidden = bool2CboolPtr(wvprefs.KeepRunningWhenHidden.Get())
 	}
 
 	return result
