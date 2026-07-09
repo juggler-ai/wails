@@ -412,6 +412,21 @@ type WindowsWindow struct {
 	// Default: false
 	HiddenOnTaskbar bool
 
+	// KeepRunningWhenHidden leaves the WebView2 controller visible after the
+	// first navigation of a window that is not logically visible at that point
+	// (created Hidden and not yet shown, or hidden before that navigation
+	// completed), so WebView2 does not put it into efficiency mode, which
+	// throttles the page's timers (#2861). Showing and then hiding or
+	// minimising the window still hides the controller as usual.
+	//
+	// Under visual hosting (Options.Windows.UseVisualHosting, or
+	// WebView2CompositionHosting on this window), the hidden window's visible
+	// controller leaves an invisible DirectComposition input surface at the
+	// window's location, so enable this only for windows that are never shown
+	// to the user, ideally positioned off-screen.
+	// Default: false
+	KeepRunningWhenHidden bool
+
 	// EnableSwipeGestures enables swipe gestures for the window
 	// Default: false
 	EnableSwipeGestures bool

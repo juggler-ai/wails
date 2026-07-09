@@ -2915,7 +2915,11 @@ func (w *windowsWebviewWindow) navigationCompleted(
 	// re-asserts IsVisible(true) when the window is actually shown.
 	// showRequested is initialised to !options.Hidden and only show()/hide()
 	// flip it, so these two flags alone identify both cases.
-	if !w.windowShown && !w.showRequested {
+	//
+	// KeepRunningWhenHidden skips this: the window is meant to run hidden, and
+	// a hidden controller is put into efficiency mode (#2861). The window
+	// accepts the input dead zone in exchange (see the option's documentation).
+	if !w.windowShown && !w.showRequested && !w.parent.options.Windows.KeepRunningWhenHidden {
 		_ = w.chromium.Hide()
 	}
 }
