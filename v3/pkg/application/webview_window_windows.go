@@ -2714,7 +2714,13 @@ func (w *windowsWebviewWindow) navigationCompleted(
 	// re-asserts IsVisible(true) when the window is actually shown.
 	// showRequested is initialised to !options.Hidden and only show()/hide()
 	// flip it, so these two flags alone identify both cases.
-	if !w.windowShown && !w.showRequested {
+	//
+	// KeepRunningWhenHidden opts out: an always-hidden background WebView (the
+	// headless engine, the test-runner pool) must keep IsVisible=true or
+	// WebView2 drops it into efficiency mode and throttles its JS timers toward
+	// 0Hz (issue #2861), freezing the work it exists to do. Such windows accept
+	// the invisible-surface dead zone in exchange for staying live.
+	if !w.windowShown && !w.showRequested && !w.parent.options.Windows.KeepRunningWhenHidden {
 		_ = w.chromium.Hide()
 	}
 }
