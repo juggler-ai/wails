@@ -2659,14 +2659,19 @@ func (w *windowsWebviewWindow) setupChromium(recovering bool) (ready bool) {
 		}
 	}
 
-	// Prevent efficiency mode by keeping WebView2 visible (fixes issue #2861)
-	// Microsoft recommendation: keep IsVisible = true to avoid efficiency mode
-	// See: https://github.com/MicrosoftEdge/WebView2Feedback/discussions/4021
-	// TODO: Re-enable when PutIsVisible method is available in go-webview2 package
-	// err := chromium.PutIsVisible(true)
-	// if err != nil {
-	//	globalApplication.error("Failed to set WebView2 visibility for efficiency mode prevention: %v", err)
-	// }
+	// Keep an always-hidden background WebView out of efficiency mode from the
+	// moment its controller exists (issue #2861; Microsoft's recommendation is
+	// to keep IsVisible = true, see
+	// https://github.com/MicrosoftEdge/WebView2Feedback/discussions/4021).
+	// WebView2 creates the controller of a window without WS_VISIBLE with
+	// IsVisible=false, and the first-paint nudge in navigationCompleted raises
+	// it only after the page's load event — which a page with heavy subframes
+	// can take seconds to reach, all of it spent at the idle priority class.
+	if opts.KeepRunningWhenHidden {
+		if err := chromium.Show(); err != nil {
+			globalApplication.error("webview2: keep hidden WebView visible: %v", err)
+		}
+	}
 
 	if chromium.HasCapability(edge.SwipeNavigation) {
 		err := chromium.PutIsSwipeNavigationEnabled(opts.EnableSwipeGestures)
@@ -2916,7 +2921,13 @@ func (w *windowsWebviewWindow) navigationCompleted(
 	// re-asserts IsVisible(true) when the window is actually shown.
 	// showRequested is initialised to !options.Hidden and only show()/hide()
 	// flip it, so these two flags alone identify both cases.
-	if !w.windowShown && !w.showRequested {
+	//
+	// KeepRunningWhenHidden opts out: an always-hidden background WebView (the
+	// headless engine, the test-runner pool) must keep IsVisible=true or
+	// WebView2 drops it into efficiency mode and throttles its JS timers toward
+	// 0Hz (issue #2861), freezing the work it exists to do. Such windows accept
+	// the invisible-surface dead zone in exchange for staying live.
+	if !w.windowShown && !w.showRequested && !w.parent.options.Windows.KeepRunningWhenHidden {
 		_ = w.chromium.Hide()
 	}
 }
