@@ -409,6 +409,18 @@ type WindowsWindow struct {
 	// Default: false
 	HiddenOnTaskbar bool
 
+	// KeepRunningWhenHidden keeps the WebView2 controller IsVisible=true even
+	// while the OS window is hidden, so WebView2 never enters "efficiency mode"
+	// and throttles the page's JS timers toward 0Hz (issue #2861). This is the
+	// Windows analogue of Mac.WebviewPreferences.KeepRunningWhenHidden and is
+	// meant for always-hidden background WebViews (e.g. a headless engine or a
+	// hidden test-runner window) that must keep executing regardless of window
+	// visibility. Note: a hidden window with a live controller leaves a
+	// DirectComposition input surface at the window's location, so only enable
+	// it for windows that are genuinely never shown to the user.
+	// Default: false
+	KeepRunningWhenHidden bool
+
 	// EnableSwipeGestures enables swipe gestures for the window
 	// Default: false
 	EnableSwipeGestures bool
