@@ -31,6 +31,162 @@ type windowsDialog struct {
 }
 
 func (m *windowsDialog) show() {
+	// Prefer the modern, themed TaskDialog. It falls back to the legacy
+	// MessageBox on any failure (e.g. comctl32 v6 unavailable), so the classic
+	// path below always remains as a safety net.
+	if m.showModern() {
+		return
+	}
+	m.showLegacy()
+}
+
+// showModern renders the dialog with the themed comctl32 v6 TaskDialog. It
+// reports whether it handled the dialog; false means the caller should fall
+// back to showLegacy. Unlike MessageBox, TaskDialog honours the dialog's own
+// custom button captions, so a Question dialog's buttons match the labels the
+// caller registered OnClick handlers against.
+func (m *windowsDialog) showModern() bool {
+	var parent uintptr
+	if m.dialog.window != nil {
+		if nativeWindow := m.dialog.window.NativeWindow(); nativeWindow != nil {
+			parent = uintptr(nativeWindow)
+		}
+	}
+
+	// The app icon lives at resource ID 3 (the same one MessageBoxWithIcon
+	// uses). Dev binaries have no embedded resource, so this may be 0 — in which
+	// case buildTaskDialogConfig falls back to a standard icon.
+	var appIcon uintptr
+	if m.UseAppIcon || m.dialog.Icon != nil {
+		appIcon = uintptr(w32.LoadIconWithResourceID(w32.GetApplicationHandle(), 3))
+	}
+
+	cfg, byID := buildTaskDialogConfig(m.dialog.MessageDialogOptions, m.UseAppIcon, appIcon)
+	cfg.Parent = w32.HWND(parent)
+	cfg.Instance = w32.GetApplicationHandle()
+	if parent != 0 {
+		cfg.Flags |= w32.TDF_POSITION_RELATIVE_TO_WINDOW
+	}
+
+	clicked, err := w32.TaskDialogIndirect(&cfg)
+	if err != nil {
+		return false
+	}
+
+	// A custom button: fire its handler directly.
+	if button, ok := byID[clicked]; ok {
+		if button.Callback != nil {
+			button.Callback()
+		}
+		return true
+	}
+	// Esc or the title-bar close box reports IDCANCEL: honour the button the
+	// caller marked as the cancel action, if any.
+	if clicked == w32.IDCANCEL {
+		for _, button := range m.dialog.Buttons {
+			if button.IsCancel {
+				if button.Callback != nil {
+					button.Callback()
+				}
+				break
+			}
+		}
+		return true
+	}
+	// A common button (OK/Yes/No/Cancel): match a registered button by its
+	// conventional label, mirroring the legacy MessageBox mapping.
+	if label := commonButtonLabel(clicked); label != "" {
+		for _, button := range m.dialog.Buttons {
+			if button.Label == label {
+				if button.Callback != nil {
+					button.Callback()
+				}
+				break
+			}
+		}
+	}
+	return true
+}
+
+// buildTaskDialogConfig translates a MessageDialog into a w32.TaskDialogConfig
+// and returns a map from each assigned custom-button ID back to the originating
+// Button, so the caller can invoke the correct OnClick handler. It performs no
+// Win32 calls, so it is unit-testable without a display.
+func buildTaskDialogConfig(opts MessageDialogOptions, useAppIcon bool, appIcon uintptr) (w32.TaskDialogConfig, map[int32]*Button) {
+	cfg := w32.TaskDialogConfig{
+		WindowTitle:     opts.Title,
+		MainInstruction: opts.Title, // shown as the bold heading
+		Content:         opts.Message,
+		Flags:           w32.TDF_ALLOW_DIALOG_CANCELLATION,
+	}
+
+	switch {
+	case useAppIcon || opts.Icon != nil:
+		if appIcon != 0 {
+			cfg.MainIcon = appIcon
+			cfg.Flags |= w32.TDF_USE_HICON_MAIN
+		} else {
+			cfg.MainIcon = w32.TD_INFORMATION_ICON
+		}
+	default:
+		switch opts.DialogType {
+		case InfoDialogType:
+			cfg.MainIcon = w32.TD_INFORMATION_ICON
+		case WarningDialogType:
+			cfg.MainIcon = w32.TD_WARNING_ICON
+		case ErrorDialogType:
+			cfg.MainIcon = w32.TD_ERROR_ICON
+		case QuestionDialogType:
+			// Modern task dialogs have no standard question icon; leave it blank.
+		}
+	}
+
+	byID := map[int32]*Button{}
+	var custom []*Button
+	for _, button := range opts.Buttons {
+		if strings.TrimSpace(button.Label) != "" {
+			custom = append(custom, button)
+		}
+	}
+	if len(custom) > 0 {
+		id := int32(w32.TaskDialogFirstButtonID)
+		for _, button := range custom {
+			cfg.Buttons = append(cfg.Buttons, w32.TaskDialogButton{ID: id, Text: button.Label})
+			byID[id] = button
+			if button.IsDefault {
+				cfg.DefaultButton = id
+			}
+			id++
+		}
+	} else {
+		switch opts.DialogType {
+		case QuestionDialogType:
+			cfg.CommonButtons = w32.TDCBF_YES_BUTTON | w32.TDCBF_NO_BUTTON
+		default:
+			cfg.CommonButtons = w32.TDCBF_OK_BUTTON
+		}
+	}
+	return cfg, byID
+}
+
+// commonButtonLabel maps a standard button result to the label string the
+// legacy path uses, so a caller that registered OnClick against "Yes"/"No"/etc.
+// still receives its callback when a common button is clicked.
+func commonButtonLabel(id int32) string {
+	switch id {
+	case w32.IDOK:
+		return "Ok"
+	case w32.IDCANCEL:
+		return "Cancel"
+	case w32.IDYES:
+		return "Yes"
+	case w32.IDNO:
+		return "No"
+	}
+	return ""
+}
+
+func (m *windowsDialog) showLegacy() {
 
 	title := w32.MustStringToUTF16Ptr(m.dialog.Title)
 	message := w32.MustStringToUTF16Ptr(m.dialog.Message)
