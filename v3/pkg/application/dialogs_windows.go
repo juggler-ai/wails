@@ -49,13 +49,11 @@ func (m *windowsDialog) show() {
 		}
 	}
 
-	// MessageBox cannot show custom button captions, so question dialogs with
-	// custom buttons use a TaskDialog (#5794). It needs comctl32 v6; if that is
-	// unavailable (no manifest) or the call fails, fall back to MessageBox.
-	if m.dialog.DialogType == QuestionDialogType && len(m.dialog.Buttons) > 0 {
-		if m.showTaskDialog(parentWindow) {
-			return
-		}
+	// A TaskDialog is themed and shows custom button captions, which MessageBox
+	// cannot (#5794). It needs comctl32 v6; if that is unavailable (no
+	// manifest) or the call fails, fall back to MessageBox.
+	if m.showTaskDialog(parentWindow) {
+		return
 	}
 
 	if m.UseAppIcon || m.dialog.Icon != nil {
@@ -98,7 +96,8 @@ var taskDialogCreated = syscall.NewCallback(func(hwnd, notification, wparam, lpa
 })
 
 // taskDialogIcon uses the same embedded app icon as MessageBoxWithIcon.
-// Missing development resources omit the icon while preserving custom captions.
+// Development binaries have no such resource, so they, and dialogs that ask for
+// no app icon, get the dialog type's standard icon.
 func (m *windowsDialog) taskDialogIcon() (instance, resource uint64) {
 	if m.UseAppIcon || m.dialog.Icon != nil {
 		handle := w32.GetApplicationHandle()
@@ -106,19 +105,19 @@ func (m *windowsDialog) taskDialogIcon() (instance, resource uint64) {
 			return uint64(handle), 3
 		}
 	}
-	return 0, 0
+	_, icon := taskDialogStandard(m.dialog.DialogType)
+	return 0, icon
 }
 
-// showTaskDialog shows the dialog with its own button captions. It returns
-// false, without having shown anything, when TaskDialogIndirect cannot be used.
+// showTaskDialog shows the dialog as a task dialog: the title as its bold
+// heading over the message, and the dialog's own buttons, or the standard set
+// for its type when it has none. It returns false, without having shown
+// anything, when TaskDialogIndirect cannot be used.
 func (m *windowsDialog) showTaskDialog(parentWindow uintptr) bool {
 	if !w32.TaskDialogAvailable() {
 		return false
 	}
 	plan := planTaskDialog(m.dialog.Buttons)
-	if len(plan.buttons) == 0 {
-		return false
-	}
 
 	ptrSize := int(unsafe.Sizeof(uintptr(0)))
 	title := w32.MustStringToUTF16Ptr(m.dialog.Title)
@@ -132,9 +131,16 @@ func (m *windowsDialog) showTaskDialog(parentWindow uintptr) bool {
 		ids[i] = b.ID
 	}
 	buttons := encodeTaskDialogButtons(ptrSize, ids, labelAddrs)
+	var buttonsAddr uint64
+	var commonButtons uint32
+	if len(buttons) > 0 {
+		buttonsAddr = uint64(uintptr(unsafe.Pointer(&buttons[0])))
+	} else {
+		commonButtons, _ = taskDialogStandard(m.dialog.DialogType)
+	}
 
 	var flags uint32
-	if plan.cancel != nil {
+	if plan.allowsCancel(m.dialog.DialogType) {
 		flags |= tdfAllowDialogCancellation
 	}
 	if parentWindow != 0 {
@@ -142,16 +148,18 @@ func (m *windowsDialog) showTaskDialog(parentWindow uintptr) bool {
 	}
 	hInstance, mainIcon := m.taskDialogIcon()
 	config := encodeTaskDialogConfig(ptrSize, taskDialogConfig{
-		hwndParent:    uint64(parentWindow),
-		hInstance:     hInstance,
-		mainIcon:      mainIcon,
-		callback:      uint64(taskDialogCreated),
-		flags:         flags,
-		title:         uint64(uintptr(unsafe.Pointer(title))),
-		content:       uint64(uintptr(unsafe.Pointer(message))),
-		buttonCount:   uint32(len(plan.buttons)),
-		buttons:       uint64(uintptr(unsafe.Pointer(&buttons[0]))),
-		defaultButton: plan.defaultID,
+		hwndParent:      uint64(parentWindow),
+		hInstance:       hInstance,
+		mainIcon:        mainIcon,
+		callback:        uint64(taskDialogCreated),
+		flags:           flags,
+		commonButtons:   commonButtons,
+		title:           uint64(uintptr(unsafe.Pointer(title))),
+		mainInstruction: uint64(uintptr(unsafe.Pointer(title))),
+		content:         uint64(uintptr(unsafe.Pointer(message))),
+		buttonCount:     uint32(len(plan.buttons)),
+		buttons:         buttonsAddr,
+		defaultButton:   plan.defaultID,
 	})
 
 	result, err := w32.TaskDialogIndirect(config)
@@ -161,7 +169,12 @@ func (m *windowsDialog) showTaskDialog(parentWindow uintptr) bool {
 	runtime.KeepAlive(labels)
 	runtime.KeepAlive(buttons)
 	if err != nil {
-		globalApplication.warning("TaskDialogIndirect failed, falling back to MessageBox: %v", err)
+		// Either way the message is still shown, by MessageBox.
+		if taskDialogFailureIsBug(err) {
+			globalApplication.error("TaskDialogIndirect rejected the dialog configuration, falling back to MessageBox. This is a Wails bug; please report it: %v", err)
+		} else {
+			globalApplication.warning("TaskDialogIndirect failed, falling back to MessageBox: %v", err)
+		}
 		return false
 	}
 	if b := plan.buttonFor(result); b != nil && b.Callback != nil {
