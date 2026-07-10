@@ -2,14 +2,18 @@ package application
 
 import (
 	"encoding/binary"
+	"errors"
 	"strings"
+	"syscall"
 )
 
 // Platform-independent helpers for the Windows message dialog implementation.
 //
-// MessageBox can only show fixed, localised button captions (Yes/No, ...), so
-// question dialogs with custom buttons (#5794) are shown with TaskDialogIndirect.
-// The logic that maps buttons to dialog IDs and back, and the byte layout of the
+// Message dialogs are shown with TaskDialogIndirect, which renders in the
+// current visual style and shows custom button captions, where MessageBox draws
+// an unthemed box with fixed, localised captions (Yes/No, ...) only (#5794).
+// MessageBox remains the fallback when TaskDialogIndirect is unavailable. The
+// logic that maps buttons to dialog IDs and back, and the byte layout of the
 // (1-byte packed) TASKDIALOGCONFIG structure, lives here so it can be unit tested
 // on any platform.
 
@@ -18,6 +22,10 @@ const (
 	// collide with the standard IDOK..IDCONTINUE (1-11) return values.
 	taskDialogButtonIDBase int32 = 1000
 
+	// eInvalidArg is the HRESULT TaskDialogIndirect returns for a malformed
+	// TASKDIALOGCONFIG.
+	eInvalidArg uint32 = 0x80070057
+
 	// idCancel is returned by TaskDialogIndirect when the dialog is dismissed
 	// with Escape or the close button (TDF_ALLOW_DIALOG_CANCELLATION).
 	idCancel int32 = 2
@@ -25,7 +33,36 @@ const (
 	// TASKDIALOGCONFIG flags
 	tdfAllowDialogCancellation  uint32 = 0x0008
 	tdfPositionRelativeToWindow uint32 = 0x1000
+
+	// TASKDIALOGCONFIG common buttons (TDCBF_*). Their results are the same
+	// IDOK/IDYES/IDNO values MessageBox returns.
+	tdcbfOK  uint32 = 0x0001
+	tdcbfYes uint32 = 0x0002
+	tdcbfNo  uint32 = 0x0004
 )
+
+// Standard task dialog icons, as the MAKEINTRESOURCE values pszMainIcon takes.
+const (
+	tdWarningIcon     uint64 = 0xFFFF // TD_WARNING_ICON, MAKEINTRESOURCE(-1)
+	tdErrorIcon       uint64 = 0xFFFE // TD_ERROR_ICON, MAKEINTRESOURCE(-2)
+	tdInformationIcon uint64 = 0xFFFD // TD_INFORMATION_ICON, MAKEINTRESOURCE(-3)
+)
+
+// taskDialogStandard returns the common buttons a dialog of the given type
+// shows when it has no buttons of its own, and the type's standard icon. Task
+// dialogs have no question icon, so a question dialog's icon is 0 (none).
+func taskDialogStandard(t DialogType) (commonButtons uint32, icon uint64) {
+	switch t {
+	case QuestionDialogType:
+		return tdcbfYes | tdcbfNo, 0
+	case WarningDialogType:
+		return tdcbfOK, tdWarningIcon
+	case ErrorDialogType:
+		return tdcbfOK, tdErrorIcon
+	default:
+		return tdcbfOK, tdInformationIcon
+	}
+}
 
 type taskDialogButton struct {
 	ID    int32
@@ -58,6 +95,28 @@ func planTaskDialog(buttons []*Button) taskDialogPlan {
 		}
 	}
 	return p
+}
+
+// taskDialogFailureIsBug reports whether TaskDialogIndirect failed with
+// E_INVALIDARG. That can only mean the TASKDIALOGCONFIG Wails built is
+// malformed, so it is a Wails bug, where any other failure comes from the
+// environment.
+func taskDialogFailureIsBug(err error) bool {
+	var errno syscall.Errno
+	return errors.As(err, &errno) && uint32(errno) == eInvalidArg
+}
+
+// allowsCancel reports whether Escape and the close box dismiss the dialog
+// (TDF_ALLOW_DIALOG_CANCELLATION). They do when they would dismiss the
+// MessageBox it replaces: a dialog with a cancel button, or a standard OK
+// dialog. A standard question shows Yes and No, and MessageBox requires one of
+// them (MB_YESNO has no cancel), as does a dialog with custom buttons and no
+// cancel button.
+func (p taskDialogPlan) allowsCancel(t DialogType) bool {
+	if p.cancel != nil {
+		return true
+	}
+	return len(p.buttons) == 0 && t != QuestionDialogType
 }
 
 // buttonFor returns the button that was activated for the given result ID.
@@ -126,16 +185,18 @@ func messageBoxFallbackButtons(buttons []*Button) ([]*Button, *Button) {
 // taskDialogConfig holds the values for a TASKDIALOGCONFIG. Pointer fields are
 // passed as raw addresses; the caller keeps the pointed-to data alive.
 type taskDialogConfig struct {
-	hwndParent    uint64
-	hInstance     uint64
-	mainIcon      uint64
-	callback      uint64
-	flags         uint32
-	title         uint64 // PCWSTR
-	content       uint64 // PCWSTR
-	buttonCount   uint32
-	buttons       uint64 // *TASKDIALOG_BUTTON
-	defaultButton int32
+	hwndParent      uint64
+	hInstance       uint64
+	mainIcon        uint64
+	callback        uint64
+	flags           uint32
+	commonButtons   uint32 // TDCBF_* flags, used when there are no custom buttons
+	title           uint64 // PCWSTR
+	mainInstruction uint64 // PCWSTR, the bold heading above the content
+	content         uint64 // PCWSTR
+	buttonCount     uint32
+	buttons         uint64 // *TASKDIALOG_BUTTON
+	defaultButton   int32
 }
 
 // encodeTaskDialogButtons lays out an array of TASKDIALOG_BUTTON {int; PCWSTR}.
@@ -165,10 +226,10 @@ func encodeTaskDialogConfig(ptrSize int, c taskDialogConfig) []byte {
 	ptr(c.hwndParent)
 	ptr(c.hInstance)
 	u32(c.flags)
-	u32(0) // dwCommonButtons
+	u32(c.commonButtons)
 	ptr(c.title)
 	ptr(c.mainIcon) // pszMainIcon resource ID
-	ptr(0)          // pszMainInstruction
+	ptr(c.mainInstruction)
 	ptr(c.content)
 	u32(c.buttonCount)
 	ptr(c.buttons)
