@@ -71,16 +71,16 @@ func TestMessageBoxButtonFor(t *testing.T) {
 }
 
 func TestEncodeTaskDialogConfigLayout(t *testing.T) {
-	c := taskDialogConfig{hwndParent: 0x11, hInstance: 0x55, mainIcon: 3, callback: 0x66, flags: 0x1008, title: 0x22, content: 0x33, buttonCount: 2, buttons: 0x44, defaultButton: 1001}
+	c := taskDialogConfig{hwndParent: 0x11, hInstance: 0x55, mainIcon: 3, callback: 0x66, flags: 0x1008, commonButtons: 0x6, title: 0x22, mainInstruction: 0x77, content: 0x33, buttonCount: 2, buttons: 0x44, defaultButton: 1001}
 	b := encodeTaskDialogConfig(8, c)
 	if len(b) != 160 || binary.LittleEndian.Uint32(b) != 160 {
 		t.Fatalf("amd64 size = %d", len(b))
 	}
-	checks := map[int]uint64{4: 0x11, 12: 0x55, 36: 3, 140: 0x66, 20: 0x1008, 28: 0x22, 52: 0x33, 60: 2, 64: 0x44, 72: 1001}
+	checks := map[int]uint64{4: 0x11, 12: 0x55, 36: 3, 140: 0x66, 20: 0x1008, 24: 0x6, 28: 0x22, 44: 0x77, 52: 0x33, 60: 2, 64: 0x44, 72: 1001}
 	for off, want := range checks {
 		var got uint64
 		switch off {
-		case 20, 60, 72:
+		case 20, 24, 60, 72:
 			got = uint64(binary.LittleEndian.Uint32(b[off:]))
 		default:
 			got = binary.LittleEndian.Uint64(b[off:])
@@ -93,7 +93,7 @@ func TestEncodeTaskDialogConfigLayout(t *testing.T) {
 	if len(b32) != 96 {
 		t.Fatalf("386 size = %d, want 96", len(b32))
 	}
-	for off, want := range map[int]uint32{8: 0x55, 24: 3, 84: 0x66} {
+	for off, want := range map[int]uint32{8: 0x55, 16: 0x6, 24: 3, 28: 0x77, 84: 0x66} {
 		if got := binary.LittleEndian.Uint32(b32[off:]); got != want {
 			t.Errorf("386 offset %d = %#x, want %#x", off, got, want)
 		}
@@ -101,5 +101,32 @@ func TestEncodeTaskDialogConfigLayout(t *testing.T) {
 	btn := encodeTaskDialogButtons(8, []int32{1000, 1001}, []uint64{0xA, 0xB})
 	if len(btn) != 24 || binary.LittleEndian.Uint32(btn[12:]) != 1001 || binary.LittleEndian.Uint64(btn[16:]) != 0xB {
 		t.Errorf("bad button layout: %v", btn)
+	}
+}
+
+// A dialog with no buttons of its own shows the standard set for its type,
+// with the matching standard icon; a question has no standard icon.
+func TestTaskDialogStandard(t *testing.T) {
+	cases := []struct {
+		typ     DialogType
+		buttons uint32
+		icon    uint64
+	}{
+		{InfoDialogType, tdcbfOK, tdInformationIcon},
+		{WarningDialogType, tdcbfOK, tdWarningIcon},
+		{ErrorDialogType, tdcbfOK, tdErrorIcon},
+		{QuestionDialogType, tdcbfYes | tdcbfNo, 0},
+	}
+	for _, c := range cases {
+		buttons, icon := taskDialogStandard(c.typ)
+		if buttons != c.buttons || icon != c.icon {
+			t.Errorf("type %d: buttons=%#x icon=%#x, want buttons=%#x icon=%#x", c.typ, buttons, icon, c.buttons, c.icon)
+		}
+	}
+	// The standard results are MessageBox's IDs, so a dialog that registered
+	// buttons by those captions still gets its callback.
+	yes := &Button{Label: "Yes"}
+	if got := messageBoxButtonFor([]*Button{yes}, 6); got != yes {
+		t.Error("IDYES from a common Yes button should match a Yes label")
 	}
 }
