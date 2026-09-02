@@ -220,8 +220,11 @@ func (m *windowOpenFileDialog) show() (chan string, error) {
 		Folder:      defaultFolder,
 	}
 
+	// The common item dialog picks folders or files, never both, and its folder
+	// dialog does not list regular files at all, so a dialog that will accept a
+	// file is opened as a file dialog.
 	var result []string
-	switch openDialogKindFor(m.dialog.canChooseDirectories, m.dialog.allowsMultipleSelection) {
+	switch openDialogKindFor(m.dialog.selectsDirectoriesOnly(), m.dialog.allowsMultipleSelection) {
 	case openMultipleFiles:
 		temp, err := showCfdDialog(
 			func() (cfd.Dialog, error) {
@@ -282,14 +285,15 @@ const (
 )
 
 // openDialogKindFor picks the dialog for an OpenFile request. The Windows
-// dialog cannot mix files and folders, so directories take precedence when
-// both are allowed (unchanged); multiple selection applies to folders as well
-// as files, matching macOS and Linux.
-func openDialogKindFor(canChooseDirectories, allowsMultipleSelection bool) openDialogKind {
+// dialog cannot mix files and folders, so a folder dialog is chosen only when
+// directories are all the request accepts (see selectsDirectoriesOnly);
+// multiple selection applies to folders as well as files, matching macOS and
+// Linux.
+func openDialogKindFor(directoriesOnly, allowsMultipleSelection bool) openDialogKind {
 	switch {
-	case canChooseDirectories && allowsMultipleSelection:
+	case directoriesOnly && allowsMultipleSelection:
 		return openMultipleFolders
-	case canChooseDirectories:
+	case directoriesOnly:
 		return openSingleFolder
 	case allowsMultipleSelection:
 		return openMultipleFiles
