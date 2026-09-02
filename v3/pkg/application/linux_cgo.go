@@ -1998,7 +1998,10 @@ func runChooserDialog(window pointer, allowMultiple, createFolders, showHidden b
 func runOpenFileDialog(dialog *OpenFileDialogStruct) (chan string, error) {
 	var action int
 
-	if dialog.canChooseDirectories {
+	// GTK has no mode that takes files and directories together, and its folder
+	// mode greys out every regular file, so a dialog that will accept a file
+	// opens as a file chooser.
+	if dialog.selectsDirectoriesOnly() {
 		action = 2 // GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER
 	} else {
 		action = 0 // GTK_FILE_CHOOSER_ACTION_OPEN
