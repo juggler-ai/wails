@@ -119,7 +119,7 @@ func (d *iosOpenFileDialog) show() (chan string, error) {
 	iosFileResponses[id] = results
 	iosFileDialogsLock.Unlock()
 
-	directories := d.dialog.canChooseDirectories && !d.dialog.canChooseFiles
+	directories := d.dialog.selectsDirectoriesOnly()
 	C.ios_show_document_picker(C.uint(id), C.bool(directories), C.bool(d.dialog.allowsMultipleSelection))
 	return results, nil
 }
