@@ -262,3 +262,37 @@ func TestOpenFileDialogSetOptions_CanChooseFilesDefault(t *testing.T) {
 		}
 	})
 }
+
+func TestOpenFileDialogSelectsDirectoriesOnly(t *testing.T) {
+	tests := []struct {
+		name        string
+		files       bool
+		directories bool
+		want        bool
+	}{
+		{name: "files only", files: true, directories: false, want: false},
+		{name: "directories only", files: false, directories: true, want: true},
+		{name: "files and directories", files: true, directories: true, want: false},
+		{name: "neither", files: false, directories: false, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dialog := newOpenFileDialog().
+				CanChooseFiles(tt.files).
+				CanChooseDirectories(tt.directories)
+
+			if got := dialog.selectsDirectoriesOnly(); got != tt.want {
+				t.Errorf("selectsDirectoriesOnly() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("CanChooseDirectories alone leaves the default file selection in place", func(t *testing.T) {
+		dialog := newOpenFileDialog().CanChooseDirectories(true)
+
+		if dialog.selectsDirectoriesOnly() {
+			t.Error("a dialog that still accepts files must not be shown as a folder chooser")
+		}
+	})
+}
