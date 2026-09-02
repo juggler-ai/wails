@@ -117,7 +117,7 @@ type androidFilePickerOptions struct {
 }
 
 func (d *androidOpenFileDialog) show() (chan string, error) {
-	if d.dialog.canChooseDirectories && !d.dialog.canChooseFiles {
+	if d.dialog.selectsDirectoriesOnly() {
 		return nil, fmt.Errorf("directory selection is not supported on Android: the Storage Access Framework returns document-tree URIs, not filesystem paths")
 	}
 
