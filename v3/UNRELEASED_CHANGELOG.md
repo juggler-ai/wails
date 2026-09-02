@@ -23,6 +23,7 @@ After processing, the content will be moved to the main changelog and this file 
 
 ## Fixed
 <!-- Bug fixes -->
+- Show a file dialog rather than a folder chooser on Linux and Windows when an open dialog accepts both files and directories, so its files can be selected by @julianstorer
 
 ## Deprecated
 <!-- Soon-to-be removed features -->

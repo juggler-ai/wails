@@ -122,8 +122,13 @@ func (m *windowOpenFileDialog) show() (chan string, error) {
 		Folder:      defaultFolder,
 	}
 
+	// The common item dialog picks folders or files, never both, and its folder
+	// dialog does not list regular files at all, so a dialog that will accept a
+	// file is opened as a file dialog.
+	directoriesOnly := m.dialog.selectsDirectoriesOnly()
+
 	var result []string
-	if m.dialog.allowsMultipleSelection && !m.dialog.canChooseDirectories {
+	if m.dialog.allowsMultipleSelection && !directoriesOnly {
 		temp, err := showCfdDialog(
 			func() (cfd.Dialog, error) {
 				return cfd.NewOpenMultipleFilesDialog(config)
@@ -133,7 +138,7 @@ func (m *windowOpenFileDialog) show() (chan string, error) {
 		}
 		result = temp.([]string)
 	} else {
-		if m.dialog.canChooseDirectories {
+		if directoriesOnly {
 			temp, err := showCfdDialog(
 				func() (cfd.Dialog, error) {
 					return cfd.NewSelectFolderDialog(config)
