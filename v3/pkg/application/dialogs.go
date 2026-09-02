@@ -219,6 +219,20 @@ func (d *OpenFileDialogStruct) CanChooseDirectories(canChooseDirectories bool) *
 	return d
 }
 
+// selectsDirectoriesOnly reports whether a platform should open its chooser in
+// folder-selecting mode.
+//
+// macOS is the only platform that can offer both at once: NSOpenPanel takes
+// canChooseFiles and canChooseDirectories as independent flags. GTK, the
+// Windows common item dialog and the mobile pickers each have one mode or the
+// other, and their folder mode makes regular files unselectable — greyed out
+// under GTK, absent altogether on Windows. Folder mode is therefore theirs to
+// use only when directories are all that is wanted; a dialog that will also
+// take a file opens as a file chooser, where directories remain navigable.
+func (d *OpenFileDialogStruct) selectsDirectoriesOnly() bool {
+	return d.canChooseDirectories && !d.canChooseFiles
+}
+
 func (d *OpenFileDialogStruct) CanCreateDirectories(canCreateDirectories bool) *OpenFileDialogStruct {
 	d.canCreateDirectories = canCreateDirectories
 	return d
