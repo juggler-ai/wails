@@ -27,6 +27,7 @@ After processing, the content will be moved to the main changelog and this file 
 - Recover from WebView2 process failures instead of leaving a blank window in [PR](https://github.com/wailsapp/wails/pull/6002) by @taliesin-ai
 - Apply the window title to frameless windows on Linux, so taskbars and window switchers can tell an application's windows apart in [PR](https://github.com/wailsapp/wails/pull/5960) by @julianstorer
 - Show a file dialog rather than a folder chooser on Linux and Windows when an open dialog accepts both files and directories, so its files can be selected by @julianstorer
+- Report macOS and GTK displays in the coordinate space their windows are measured in, so a display whose scale factor differs from the primary's no longer reports bounds no window can be found within ([#5409](https://github.com/wailsapp/wails/issues/5409)) by @julianstorer
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
