@@ -42,6 +42,7 @@ After processing, the content will be moved to the main changelog and this file 
 - Fix by-value `double` arguments to WebView2 COM methods on windows/arm64 — `ZoomFactor`, `RasterizationScale`, cookie `Expires`, and the print settings scale, page size and margins were affected there (the print-settings setters previously returned `ErrDoubleArgUnsupported`): affected calls now goes through a `runtime.cgocall` trampoline that loads `d0`, which Go's syscall path cannot (golang.org/issue/62583) by @APshenkin
 - Apply the window title to frameless windows on Linux, so taskbars and window switchers can tell an application's windows apart in [PR](https://github.com/wailsapp/wails/pull/5960) by @julianstorer
 - Show a file dialog rather than a folder chooser on Linux and Windows when an open dialog accepts both files and directories, so its files can be selected by @julianstorer
+- Report macOS and GTK displays in the coordinate space their windows are measured in, so a display whose scale factor differs from the primary's no longer reports bounds no window can be found within ([#5409](https://github.com/wailsapp/wails/issues/5409)) by @julianstorer
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
