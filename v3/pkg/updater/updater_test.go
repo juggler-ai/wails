@@ -561,6 +561,105 @@ func TestRestart_DoesNotQuitBeforeHelperReady(t *testing.T) {
 	}
 }
 
+// The staged payload belongs to the helper from the moment Restart hands it
+// over. The helper waits for this process to exit before swapping, and a
+// DownloadAndInstall arriving inside that window begins by discarding the
+// staging directory — deleting what the helper is about to install from. A
+// staged .app is a directory, and renaming one succeeds however little it
+// holds, so the helper would report success having installed nothing.
+func TestRestart_StagedPayloadSurvivesConcurrentDownload(t *testing.T) {
+	t.Cleanup(updater.SetSelfExecutableForTest(os.Executable))
+	t.Cleanup(updater.SetNewDetachedCommandForTest(func(path string) *exec.Cmd {
+		return exec.Command(path, "-test.run=^$")
+	}))
+	t.Cleanup(updater.SetWaitForHelperReadyForTest(func(string, time.Duration) error {
+		return nil
+	}))
+
+	host := &fakeHost{}
+	body := []byte("payload")
+	p := &fakeProvider{name: "p", rel: &updater.Release{
+		Version:  "2.0.0",
+		Artifact: updater.Artifact{Filename: "app.bin", Size: int64(len(body))},
+	}, body: body}
+	u := newConfigured(t, host, p)
+
+	if _, err := u.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.DownloadAndInstall(context.Background()); err != nil {
+		t.Fatalf("DownloadAndInstall: %v", err)
+	}
+	staged := u.DownloadedPath()
+	if staged == "" {
+		t.Fatal("nothing staged after DownloadAndInstall")
+	}
+
+	if err := u.Restart(context.Background()); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+
+	if err := u.DownloadAndInstall(context.Background()); !errors.Is(err, updater.ErrRestartPending) {
+		t.Fatalf("DownloadAndInstall during a pending restart: want ErrRestartPending, got %v", err)
+	}
+	if _, err := os.Stat(staged); err != nil {
+		t.Fatalf("staged payload destroyed while a helper waited to install it: %v", err)
+	}
+}
+
+// When no helper is left standing by, ownership of the staging directory has
+// to come back: nothing else would ever clean the directory up, and refusing
+// later downloads on behalf of a helper that is not there would leave the
+// application unable to update until it is relaunched.
+func TestRestart_FailedHandoff_ReturnsStagingOwnership(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		command func(path string) *exec.Cmd
+		ready   func(string, time.Duration) error
+	}{
+		{
+			name:    "spawn fails",
+			command: func(string) *exec.Cmd { return exec.Command(filepath.Join(t.TempDir(), "absent")) },
+			ready:   func(string, time.Duration) error { return nil },
+		},
+		{
+			name:    "helper never signals readiness",
+			command: func(path string) *exec.Cmd { return exec.Command(path, "-test.run=^$") },
+			ready:   func(string, time.Duration) error { return updater.ErrHelperNotReady },
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(updater.SetSelfExecutableForTest(os.Executable))
+			t.Cleanup(updater.SetNewDetachedCommandForTest(tt.command))
+			t.Cleanup(updater.SetWaitForHelperReadyForTest(tt.ready))
+
+			host := &fakeHost{}
+			body := []byte("payload")
+			p := &fakeProvider{name: "p", rel: &updater.Release{
+				Version:  "2.0.0",
+				Artifact: updater.Artifact{Filename: "app.bin", Size: int64(len(body))},
+			}, body: body}
+			u := newConfigured(t, host, p)
+
+			if _, err := u.Check(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := u.DownloadAndInstall(context.Background()); err != nil {
+				t.Fatalf("DownloadAndInstall: %v", err)
+			}
+			if err := u.Restart(context.Background()); err == nil {
+				t.Fatal("Restart: want a handoff failure, got nil")
+			}
+
+			// Ownership is back, so a fresh attempt is served rather than
+			// refused as a restart already in progress.
+			if err := u.DownloadAndInstall(context.Background()); err != nil {
+				t.Fatalf("DownloadAndInstall after a failed handoff: %v", err)
+			}
+		})
+	}
+}
+
 func TestDownloadAndInstall_DigestMatch_Succeeds(t *testing.T) {
 	host := &fakeHost{}
 	body := []byte("real-bytes")
