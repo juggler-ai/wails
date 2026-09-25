@@ -27,9 +27,18 @@ type Updater struct {
 	current    string // CurrentVersion, snapshot for State()
 	pending    *Release
 	resolved   string // resolved download path (after install)
-	stagingDir string // os.MkdirTemp parent of resolved, removed on Restart / re-Check
+	stagingDir string // os.MkdirTemp parent of resolved; "" once a helper owns it
 	lastDigest []byte // digest computed streaming during the last successful download
 	skipped    string // version recorded by SkipVersion / the default window Skip button
+
+	// restarting records that Restart has spawned a swap helper which is now
+	// waiting for this process to exit before it renames the staged payload
+	// into place. From that moment the staging directory belongs to the helper
+	// and nothing here may touch it: a concurrent DownloadAndInstall calling
+	// discardStaging would delete the payload mid-wait, and because a staged
+	// .app bundle is a DIRECTORY the helper's rename would still succeed —
+	// installing an empty husk over a working application and reporting success.
+	restarting bool
 
 	dlMu    sync.Mutex     // serialises concurrent DownloadAndInstall calls
 	sessMu  sync.Mutex     // protects session pointer separately from u.mu
@@ -265,12 +274,18 @@ func (u *Updater) DownloadAndInstall(ctx context.Context) error {
 	u.mu.RLock()
 	cfg := u.cfg
 	pending := u.pending
+	restarting := u.restarting
 	u.mu.RUnlock()
 	if cfg == nil {
 		return ErrNotConfigured
 	}
 	if pending == nil {
 		return ErrNoPendingRelease
+	}
+	// A helper is already waiting to swap the staged payload in. Re-downloading
+	// now would discard the very directory it is about to rename.
+	if restarting {
+		return ErrRestartPending
 	}
 
 	provider, err := findProvider(cfg.Providers, pending.Provider)
@@ -409,6 +424,21 @@ func (u *Updater) Restart(_ context.Context) error {
 		return fmt.Errorf("updater: resolve self: %w", err)
 	}
 
+	// Hand the staging directory to the helper before spawning it. Clearing
+	// stagingDir here makes discardStaging a no-op for this payload, so a
+	// DownloadAndInstall racing the shutdown cannot delete what the helper is
+	// waiting to install; the helper removes the directory itself after the
+	// swap. Ownership transfers before the helper is started, so there is no
+	// window in which a helper exists and this process still believes the
+	// directory is its own to delete. The two paths below that end with no
+	// helper standing by — a spawn that failed, and one killed for never
+	// signalling readiness — hand it back.
+	u.mu.Lock()
+	ownedDir := u.stagingDir
+	u.stagingDir = ""
+	u.restarting = true
+	u.mu.Unlock()
+
 	target := bundleTarget(self)
 	// Include PID so concurrent helpers (e.g. test runs, multiple installed
 	// Wails apps updating at the same time) don't truncate each other's logs.
@@ -428,11 +458,13 @@ func (u *Updater) Restart(_ context.Context) error {
 	cmd := newDetachedCommand(self)
 	cmd.Env = env
 	if err := startHelper(cmd); err != nil {
+		u.reclaimStaging(ownedDir)
 		return wrapHelperSpawnError(err)
 	}
 	if err := waitForHelperReady(readyPath, timeout); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		u.reclaimStaging(ownedDir)
 		return err
 	}
 	_ = cmd.Process.Release()
@@ -515,6 +547,11 @@ func (u *Updater) transition(s State) {
 // pending release becomes stale. The helper process is responsible for
 // cleaning up its own staging dir post-swap; this is for the cases the
 // helper never starts.
+//
+// Once Restart has handed a directory to a helper, stagingDir is empty and
+// this deletes nothing — deleting a payload a waiting helper is about to
+// install would replace a working application with whatever survived the
+// unlink pass.
 func (u *Updater) discardStaging() {
 	u.mu.Lock()
 	dir := u.stagingDir
@@ -524,6 +561,18 @@ func (u *Updater) discardStaging() {
 	if dir != "" {
 		_ = os.RemoveAll(dir)
 	}
+}
+
+// reclaimStaging takes a staging directory back when the helper it was handed
+// to is not going to perform the swap. Ownership has to return to this process
+// for the payload to remain reachable at all: nothing else would ever delete
+// the directory, and DownloadAndInstall would keep reporting ErrRestartPending
+// on behalf of a helper that is not there.
+func (u *Updater) reclaimStaging(dir string) {
+	u.mu.Lock()
+	u.stagingDir = dir
+	u.restarting = false
+	u.mu.Unlock()
 }
 
 func findProvider(providers []Provider, name string) (Provider, error) {
@@ -569,4 +618,9 @@ var (
 	ErrNotConfigured      = errors.New("updater: Init has not been called")
 	ErrNoPendingRelease   = errors.New("updater: no pending release (call Check first)")
 	ErrDownloadInProgress = errors.New("updater: download already in progress")
+
+	// ErrRestartPending is returned by DownloadAndInstall once Restart has
+	// spawned the swap helper. The staged payload belongs to that helper until
+	// the process exits, so there is nothing safe left to do here.
+	ErrRestartPending = errors.New("updater: a restart is already in progress")
 )
