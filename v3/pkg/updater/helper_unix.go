@@ -23,7 +23,15 @@ func platformIsAlive(pid int) bool {
 // remain valid against the unlinked inode, so we can delete a running binary
 // and immediately put a new one at its path. macOS .app bundles are
 // directories, hence RemoveAll rather than Remove.
+//
+// The payload is re-checked immediately before the target is destroyed. This
+// duplicates the caller's check on purpose: the removal below is irreversible
+// without the backup, and os.Rename cannot tell a populated directory from a
+// hollow one, so this is the last point at which refusing costs nothing.
 func replaceTarget(target, newPath string) error {
+	if err := validatePayload(newPath); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(target); err != nil {
 		return err
 	}
