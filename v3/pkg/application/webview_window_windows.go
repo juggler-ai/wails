@@ -361,6 +361,14 @@ func (w *windowsWebviewWindow) setTitle(title string) {
 	w32.SetWindowText(w.hwnd, title)
 }
 
+// setEnableFileDrop updates the flag the JS runtime consults. WebView2's
+// AllowExternalDrop governs all drag-and-drop at once, so it is deliberately
+// left alone (see the note at processMessageWithAdditionalObjects); the flag is
+// the whole mechanism on this platform.
+func (w *windowsWebviewWindow) setEnableFileDrop(enabled bool) {
+	w.execJS(fmt.Sprintf("window._wails.flags.enableFileDrop = %v;", enabled))
+}
+
 func (w *windowsWebviewWindow) setAlwaysOnTop(alwaysOnTop bool) {
 	var hwndInsertAfter uintptr
 	if alwaysOnTop {

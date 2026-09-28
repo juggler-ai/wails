@@ -356,11 +356,7 @@ func (w *linuxWebviewWindow) run() {
 	w.window, w.webview, w.vbox = windowNew(app.application, w.gtkmenu, w.parent.options.Linux.MenuStyle, w.parent.id, w.parent.options.Linux.WebviewGpuPolicy)
 	app.registerWindow(w.window, w.parent.id) // record our mapping
 	w.connectSignals()
-	if w.parent.options.EnableFileDrop {
-		w.enableDND()
-	} else {
-		w.disableDND()
-	}
+	w.setEnableFileDropNative(w.parent.options.EnableFileDrop)
 	title := w.parent.options.Title
 	if title == "" {
 		title = w.parent.options.Name
@@ -460,6 +456,24 @@ func (w *linuxWebviewWindow) run() {
 			w.openDevTools()
 		}
 	}
+}
+
+// setEnableFileDropNative attaches or detaches the GTK drag destination. Split
+// out so window creation and a later toggle share one statement of what the
+// flag means natively.
+func (w *linuxWebviewWindow) setEnableFileDropNative(enabled bool) {
+	if enabled {
+		w.enableDND()
+		return
+	}
+	w.disableDND()
+}
+
+func (w *linuxWebviewWindow) setEnableFileDrop(enabled bool) {
+	w.setEnableFileDropNative(enabled)
+	// Re-pushed from the options on every load; this is the push for the
+	// document that is loaded now.
+	w.execJS(fmt.Sprintf("window._wails.flags.enableFileDrop=%v;", enabled))
 }
 
 func (w *linuxWebviewWindow) nativeWindow() unsafe.Pointer {
