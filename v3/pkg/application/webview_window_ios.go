@@ -154,6 +154,11 @@ func (w *iosWebviewWindow) setBackgroundColour(col RGBA) {
 	)
 }
 
+func (w *iosWebviewWindow) setEnableFileDrop(_ bool) {
+	// There is no desktop file drag to attach a destination to, so the
+	// creation-time option is ignored on this platform and so is the setter.
+}
+
 func (w *iosWebviewWindow) setEnabled(_ bool) {}
 
 func (w *iosWebviewWindow) setFrameless(_ bool) {}

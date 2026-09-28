@@ -365,11 +365,7 @@ func (w *linuxWebviewWindow) run() {
 	w.window, w.webview, w.vbox = windowNew(app.application, w.gtkmenu, w.parent.options.Linux.MenuStyle, w.parent.id, w.parent.options.Linux.WebviewGpuPolicy)
 	app.registerWindow(w.window, w.parent.id) // record our mapping
 	w.connectSignals()
-	if w.parent.options.EnableFileDrop {
-		w.enableDND()
-	} else {
-		w.disableDND()
-	}
+	w.setEnableFileDropNative(w.parent.options.EnableFileDrop)
 	title := w.parent.options.Title
 	if title == "" {
 		title = w.parent.options.Name
@@ -469,6 +465,26 @@ func (w *linuxWebviewWindow) run() {
 			w.openDevTools()
 		}
 	}
+}
+
+// setEnableFileDropNative switches the webview's native file-drop handling on
+// or off: on GTK4 it attaches or detaches the drop controllers, on GTK3 it
+// unblocks the accepting or the refusing drag signal handlers. Both are created
+// once per webview and the call is idempotent, so window creation and any
+// number of later toggles share it.
+func (w *linuxWebviewWindow) setEnableFileDropNative(enabled bool) {
+	if enabled {
+		w.enableDND()
+		return
+	}
+	w.disableDND()
+}
+
+func (w *linuxWebviewWindow) setEnableFileDrop(enabled bool) {
+	w.setEnableFileDropNative(enabled)
+	// Re-pushed from the options on every load; this is the push for the
+	// document that is loaded now.
+	w.execJS(fmt.Sprintf("window._wails.flags.enableFileDrop=%v;", enabled))
 }
 
 func (w *linuxWebviewWindow) nativeWindow() unsafe.Pointer {
