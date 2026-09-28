@@ -17,6 +17,7 @@ After processing, the content will be moved to the main changelog and this file 
 
 ## Added
 <!-- New features, capabilities, or enhancements -->
+- Add `WebviewWindow.SetEnableFileDrop()` to turn native file drop on and off while a window is open, so an application can accept dropped paths in one state and leave the webview's own HTML5 drag-and-drop to the page in another by @julianstorer
 
 ## Changed
 <!-- Changes in existing functionality -->

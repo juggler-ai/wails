@@ -36,6 +36,7 @@ type (
 		setTitle(title string)
 		setSize(width, height int)
 		setAlwaysOnTop(alwaysOnTop bool)
+		setEnableFileDrop(enabled bool)
 		setURL(url string)
 		setResizable(resizable bool)
 		setMinSize(width, height int)
@@ -505,6 +506,29 @@ func (w *WebviewWindow) SetAlwaysOnTop(b bool) Window {
 	if w.impl != nil {
 		InvokeSync(func() {
 			w.impl.setAlwaysOnTop(b)
+		})
+	}
+	return w
+}
+
+// SetEnableFileDrop turns native file drop on or off for this window while it
+// is open, so an application can accept dropped paths in one state and leave
+// the webview's own HTML5 drag-and-drop alone in another.
+//
+// The two cannot both be active. On macOS the drag destination is a transparent
+// overlay above the webview, and AppKit offers a drag to exactly one
+// destination — a refusal is not a hand-off, so anything the overlay declines
+// is not offered to the webview beneath it. Enabling this therefore takes file
+// drags away from the page, and disabling it gives them back.
+//
+// The window options are updated too: the page's flag is re-pushed from them on
+// every navigation, so a value set only on the live document would be lost at
+// the next load.
+func (w *WebviewWindow) SetEnableFileDrop(enabled bool) Window {
+	w.options.EnableFileDrop = enabled
+	if w.impl != nil && !w.isDestroyed() {
+		InvokeSync(func() {
+			w.impl.setEnableFileDrop(enabled)
 		})
 	}
 	return w
