@@ -36,6 +36,7 @@ type (
 		setTitle(title string)
 		setSize(width, height int)
 		setAlwaysOnTop(alwaysOnTop bool)
+		setEnableFileDrop(enabled bool)
 		setURL(url string)
 		setResizable(resizable bool)
 		setMinSize(width, height int)
@@ -512,6 +513,40 @@ func (w *WebviewWindow) SetAlwaysOnTop(b bool) Window {
 		})
 	}
 	return w
+}
+
+// SetEnableFileDrop turns native file drop on or off for this window while it
+// is open, so an application can accept dropped paths in one state and leave
+// the webview's own HTML5 drag-and-drop alone in another.
+//
+// The two cannot both be active. On macOS the drag destination is a transparent
+// overlay above the webview, and AppKit offers a drag to exactly one
+// destination — a refusal is not a hand-off, so anything the overlay declines
+// is not offered to the webview beneath it. Enabling this therefore takes file
+// drags away from the page, and disabling it gives them back.
+//
+// The window options are updated too: the page's flag is re-pushed from them on
+// every navigation, so a value set only on the live document would be lost at
+// the next load. They are also the gate for WindowFilesDropped, so a drop that
+// was already in flight when file drop was turned off is not delivered.
+//
+// This is deliberately not exposed to the JavaScript runtime: whether dropped
+// files reach the application as paths is the application's decision, and a
+// page must not be able to grant itself that.
+func (w *WebviewWindow) SetEnableFileDrop(enabled bool) Window {
+	w.options.EnableFileDrop = enabled
+	if w.impl != nil && !w.isDestroyed() {
+		InvokeSync(func() {
+			w.impl.setEnableFileDrop(enabled)
+		})
+	}
+	return w
+}
+
+// IsFileDropEnabled reports whether native file drop is enabled for this
+// window, as set by WebviewWindowOptions.EnableFileDrop or SetEnableFileDrop.
+func (w *WebviewWindow) IsFileDropEnabled() bool {
+	return w.options.EnableFileDrop
 }
 
 // Show shows the window.
@@ -1627,6 +1662,11 @@ func (w *WebviewWindow) Error(message string, args ...any) {
 }
 
 func (w *WebviewWindow) handleDragAndDropMessage(filenames []string, dropTarget *DropTargetDetails) {
+	// The message comes from the page, which may have started the drop before
+	// file drop was turned off or may be stale; the option is the authority.
+	if !w.options.EnableFileDrop {
+		return
+	}
 	thisEvent := NewWindowEvent()
 	ctx := newWindowEventContext()
 	ctx.setDroppedFiles(filenames)
@@ -1888,7 +1928,9 @@ func (w *WebviewWindow) ToggleMenuBar() {
 }
 
 func (w *WebviewWindow) InitiateFrontendDropProcessing(filenames []string, x int, y int) {
-	if w.impl == nil || w.isDestroyed() {
+	// The paths are handed to the page here, so a native drop that lands after
+	// file drop was turned off stops before it reaches the document.
+	if w.impl == nil || w.isDestroyed() || !w.options.EnableFileDrop {
 		return
 	}
 

@@ -438,18 +438,6 @@ static void on_drag_leave(GtkWidget *widget, GdkDragContext *context, guint time
     }
 }
 
-// Set up drag and drop handlers for external file drops with hover effects
-static void enableDND(GtkWidget *widget, uintptr_t data)
-{
-    // Core handlers for file drop
-    g_signal_connect(G_OBJECT(widget), "drag-data-received", G_CALLBACK(on_drag_data_received), (gpointer)data);
-    g_signal_connect(G_OBJECT(widget), "drag-drop", G_CALLBACK(on_drag_drop), (gpointer)data);
-
-    // Hover effect handlers - return FALSE for internal drags to let WebKit handle them
-    g_signal_connect(G_OBJECT(widget), "drag-motion", G_CALLBACK(on_drag_motion), (gpointer)data);
-    g_signal_connect(G_OBJECT(widget), "drag-leave", G_CALLBACK(on_drag_leave), (gpointer)data);
-}
-
 // Block external file drops - consume the events to prevent WebKit from navigating to files
 // Returns TRUE for file drags to consume them, FALSE for internal HTML5 drags to let WebKit handle
 static gboolean on_drag_drop_blocked(GtkWidget *widget, GdkDragContext *context, gint x, gint y,
@@ -473,11 +461,81 @@ static gboolean on_drag_motion_blocked(GtkWidget *widget, GdkDragContext *contex
     return TRUE;
 }
 
-// Set up handlers that block external file drops while allowing internal HTML5 drag-and-drop
+// The webview's file-drop handlers: one set that accepts external file drops
+// (with hover effects), and one that refuses them while still letting WebKit
+// handle internal HTML5 drags. Both sets are connected once per webview and
+// exactly one of them is unblocked at a time.
+#define WAILS_DND_HANDLERS_KEY "wails-dnd-handlers"
+
+typedef struct {
+    gulong accept[4];  // drag-data-received, drag-drop, drag-motion, drag-leave
+    gulong refuse[2];  // drag-drop, drag-motion
+    gboolean enabled;
+} WailsDNDHandlers;
+
+static void setDNDHandlersBlocked(GtkWidget *widget, const gulong *ids, guint count, gboolean blocked)
+{
+    for (guint i = 0; i < count; i++) {
+        if (blocked) {
+            g_signal_handler_block(widget, ids[i]);
+        } else {
+            g_signal_handler_unblock(widget, ids[i]);
+        }
+    }
+}
+
+// setDND makes the accepting or the refusing handler set the active one,
+// connecting both on first use. Calling it with the state already in effect
+// does nothing, so block counts never exceed one.
+static void setDND(GtkWidget *widget, uintptr_t data, gboolean enabled)
+{
+    WailsDNDHandlers *h = g_object_get_data(G_OBJECT(widget), WAILS_DND_HANDLERS_KEY);
+    if (h == NULL) {
+        h = g_new0(WailsDNDHandlers, 1);
+        h->accept[0] = g_signal_connect(G_OBJECT(widget), "drag-data-received", G_CALLBACK(on_drag_data_received), (gpointer)data);
+        h->accept[1] = g_signal_connect(G_OBJECT(widget), "drag-drop", G_CALLBACK(on_drag_drop), (gpointer)data);
+        // Hover effect handlers - return FALSE for internal drags to let WebKit handle them
+        h->accept[2] = g_signal_connect(G_OBJECT(widget), "drag-motion", G_CALLBACK(on_drag_motion), (gpointer)data);
+        h->accept[3] = g_signal_connect(G_OBJECT(widget), "drag-leave", G_CALLBACK(on_drag_leave), (gpointer)data);
+        h->refuse[0] = g_signal_connect(G_OBJECT(widget), "drag-drop", G_CALLBACK(on_drag_drop_blocked), (gpointer)data);
+        h->refuse[1] = g_signal_connect(G_OBJECT(widget), "drag-motion", G_CALLBACK(on_drag_motion_blocked), (gpointer)data);
+        h->enabled = enabled;
+        g_object_set_data_full(G_OBJECT(widget), WAILS_DND_HANDLERS_KEY, h, g_free);
+        if (enabled) {
+            setDNDHandlersBlocked(widget, h->refuse, G_N_ELEMENTS(h->refuse), TRUE);
+        } else {
+            setDNDHandlersBlocked(widget, h->accept, G_N_ELEMENTS(h->accept), TRUE);
+        }
+        return;
+    }
+    if (h->enabled == enabled) {
+        return;
+    }
+    h->enabled = enabled;
+    if (enabled) {
+        setDNDHandlersBlocked(widget, h->refuse, G_N_ELEMENTS(h->refuse), TRUE);
+        setDNDHandlersBlocked(widget, h->accept, G_N_ELEMENTS(h->accept), FALSE);
+        return;
+    }
+    // drag-leave is about to be blocked, so close a hover the page was shown.
+    if (drag_entered) {
+        drag_entered = FALSE;
+        onDragLeave((gpointer)data);
+    }
+    setDNDHandlersBlocked(widget, h->accept, G_N_ELEMENTS(h->accept), TRUE);
+    setDNDHandlersBlocked(widget, h->refuse, G_N_ELEMENTS(h->refuse), FALSE);
+}
+
+// Accept external file drops, with hover effects
+static void enableDND(GtkWidget *widget, uintptr_t data)
+{
+    setDND(widget, data, TRUE);
+}
+
+// Refuse external file drops while allowing internal HTML5 drag-and-drop
 static void disableDND(GtkWidget *widget, uintptr_t data)
 {
-    g_signal_connect(G_OBJECT(widget), "drag-drop", G_CALLBACK(on_drag_drop_blocked), (gpointer)data);
-    g_signal_connect(G_OBJECT(widget), "drag-motion", G_CALLBACK(on_drag_motion_blocked), (gpointer)data);
+    setDND(widget, data, FALSE);
 }
 
 // Store/retrieve an unsigned integer as a GObject data pointer without allocating memory.
