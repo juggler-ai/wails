@@ -556,25 +556,74 @@ static void on_motion_motion(GtkDropControllerMotion *ctrl, gdouble x, gdouble y
     onDropMotion((gint)x, (gint)y, (uintptr_t)data);
 }
 
-void enableDND(GtkWidget *widget, uintptr_t winID) {
+// The file-drop controllers are created once per webview and kept on it under
+// these keys, holding a reference of their own, so that file drop can be
+// switched off and on by detaching and re-attaching the same two controllers.
+#define WAILS_DND_MOTION_KEY "wails-dnd-motion"
+#define WAILS_DND_TARGET_KEY "wails-dnd-target"
+
+static void dnd_controllers(GtkWidget *widget, uintptr_t winID,
+                            GtkEventController **motion, GtkEventController **target) {
+    *motion = g_object_get_data(G_OBJECT(widget), WAILS_DND_MOTION_KEY);
+    *target = g_object_get_data(G_OBJECT(widget), WAILS_DND_TARGET_KEY);
+    if (*motion != NULL) {
+        return;
+    }
+
     GtkEventController *motion_ctrl = gtk_drop_controller_motion_new();
     gtk_event_controller_set_propagation_phase(motion_ctrl, GTK_PHASE_CAPTURE);
     g_signal_connect(motion_ctrl, "enter", G_CALLBACK(on_motion_enter), (gpointer)winID);
     g_signal_connect(motion_ctrl, "leave", G_CALLBACK(on_motion_leave), (gpointer)winID);
     g_signal_connect(motion_ctrl, "motion", G_CALLBACK(on_motion_motion), (gpointer)winID);
-    gtk_widget_add_controller(widget, motion_ctrl);
-    
-    GtkDropTarget *target = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
-    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(target), GTK_PHASE_CAPTURE);
-    g_signal_connect(target, "accept", G_CALLBACK(on_drop_accept), (gpointer)winID);
-    g_signal_connect(target, "enter", G_CALLBACK(on_drop_enter), (gpointer)winID);
-    g_signal_connect(target, "leave", G_CALLBACK(on_drop_leave), (gpointer)winID);
-    g_signal_connect(target, "motion", G_CALLBACK(on_drop_motion), (gpointer)winID);
-    g_signal_connect(target, "drop", G_CALLBACK(on_drop), (gpointer)winID);
-    gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(target));
+
+    GtkDropTarget *drop_target = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(drop_target), GTK_PHASE_CAPTURE);
+    g_signal_connect(drop_target, "accept", G_CALLBACK(on_drop_accept), (gpointer)winID);
+    g_signal_connect(drop_target, "enter", G_CALLBACK(on_drop_enter), (gpointer)winID);
+    g_signal_connect(drop_target, "leave", G_CALLBACK(on_drop_leave), (gpointer)winID);
+    g_signal_connect(drop_target, "motion", G_CALLBACK(on_drop_motion), (gpointer)winID);
+    g_signal_connect(drop_target, "drop", G_CALLBACK(on_drop), (gpointer)winID);
+
+    // The widget keeps the reference these were created with; each attach
+    // hands gtk_widget_add_controller a reference of its own to take, so the
+    // controllers outlive gtk_widget_remove_controller.
+    g_object_set_data_full(G_OBJECT(widget), WAILS_DND_MOTION_KEY, motion_ctrl, g_object_unref);
+    g_object_set_data_full(G_OBJECT(widget), WAILS_DND_TARGET_KEY, drop_target, g_object_unref);
+
+    *motion = motion_ctrl;
+    *target = GTK_EVENT_CONTROLLER(drop_target);
 }
 
+// enableDND attaches the webview's file-drop controllers, creating them on
+// first use. Calling it while they are attached does nothing.
+void enableDND(GtkWidget *widget, uintptr_t winID) {
+    GtkEventController *motion, *target;
+    dnd_controllers(widget, winID, &motion, &target);
+    if (gtk_event_controller_get_widget(motion) == NULL) {
+        gtk_widget_add_controller(widget, g_object_ref(motion));
+    }
+    if (gtk_event_controller_get_widget(target) == NULL) {
+        gtk_widget_add_controller(widget, g_object_ref(target));
+    }
+}
+
+// disableDND detaches the file-drop controllers, leaving drags over the webview
+// to WebKit and the page. Calling it while they are detached, or before they
+// were ever created, does nothing.
 void disableDND(GtkWidget *widget, uintptr_t winID) {
+    GtkEventController *motion = g_object_get_data(G_OBJECT(widget), WAILS_DND_MOTION_KEY);
+    GtkEventController *target = g_object_get_data(G_OBJECT(widget), WAILS_DND_TARGET_KEY);
+    if (motion != NULL && gtk_event_controller_get_widget(motion) == widget) {
+        // A detached controller emits no "leave", so close a hover the page
+        // was shown.
+        if (gtk_drop_controller_motion_contains_pointer(GTK_DROP_CONTROLLER_MOTION(motion))) {
+            onDropLeave(winID);
+        }
+        gtk_widget_remove_controller(widget, motion);
+    }
+    if (target != NULL && gtk_event_controller_get_widget(target) == widget) {
+        gtk_widget_remove_controller(widget, target);
+    }
 }
 
 // ============================================================================
