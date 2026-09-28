@@ -134,6 +134,11 @@ func (w *androidWebviewWindow) setBackgroundColour(_ RGBA) {
 	// The WebView background is managed by the Activity theme
 }
 
+func (w *androidWebviewWindow) setEnableFileDrop(_ bool) {
+	// There is no desktop file drag to attach a destination to, so the
+	// creation-time option is ignored on this platform and so is the setter.
+}
+
 func (w *androidWebviewWindow) setEnabled(_ bool) {}
 
 func (w *androidWebviewWindow) setFrameless(_ bool) {}

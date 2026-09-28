@@ -262,6 +262,50 @@ void* windowNew(unsigned int id, int width, int height, bool fraudulentWebsiteWa
 	return window;
 }
 
+// Add or remove the drag overlay after the window exists, so file drop can be
+// turned on and off while the window is open.
+//
+// It has to be the view itself that comes and goes. A drag has exactly one
+// destination: AppKit offers it to the frontmost registered view, and a view
+// that answers NSDragOperationNone from draggingEntered: has refused the drop,
+// not passed it on — the views beneath it, including the WKWebView, are never
+// asked. So an overlay left in place with a disabled flag would permanently
+// suppress the webview's own HTML5 drag-and-drop.
+void windowSetEnableFileDrop(void *window, unsigned int windowId, bool enabled) {
+	NSWindow* nsWindow = nativeWindow(window);
+	NSView* contentView = [nsWindow contentView];
+
+	WebviewDrag* existing = nil;
+	for (NSView* subview in [contentView subviews]) {
+		if ([subview isKindOfClass:[WebviewDrag class]]) {
+			existing = (WebviewDrag*)subview;
+			break;
+		}
+	}
+
+	if (enabled) {
+		if (existing != nil) {
+			return;
+		}
+		NSRect bounds = [contentView bounds];
+		WebviewDrag* dragView = [[WebviewDrag alloc] initWithFrame:NSMakeRect(0, 0, bounds.size.width-1, bounds.size.height-1)];
+		[dragView autorelease];
+		[dragView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+		[contentView addSubview:dragView];
+		dragView.windowId = windowId;
+		return;
+	}
+
+	if (existing == nil) {
+		return;
+	}
+	// Unregister before removing: a registered destination is how AppKit finds
+	// a view at all, and dropping the registration first means an in-flight
+	// drag cannot be delivered to a view on its way out.
+	[existing unregisterDraggedTypes];
+	[existing removeFromSuperview];
+}
+
 
 void printWindowStyle(void *window) {
 	NSWindow* nsWindow = nativeWindow(window);
@@ -1471,6 +1515,15 @@ func (w *macosWebviewWindow) setURL(uri string) {
 
 func (w *macosWebviewWindow) setAlwaysOnTop(alwaysOnTop bool) {
 	C.windowSetAlwaysOnTop(w.nsWindow, C.bool(alwaysOnTop))
+}
+
+func (w *macosWebviewWindow) setEnableFileDrop(enabled bool) {
+	C.windowSetEnableFileDrop(w.nsWindow, C.uint(w.parent.id), C.bool(enabled))
+	// The page's copy of the flag decides whether the runtime's own dragover
+	// handler forces dropEffect to none. It is re-pushed from the options on
+	// every navigation, so the caller has already updated those; this is the
+	// push for the document that is loaded now.
+	w.execJS(fmt.Sprintf("window._wails.flags.enableFileDrop=%v;", enabled))
 }
 
 func newWindowImpl(parent *WebviewWindow) *macosWebviewWindow {

@@ -486,6 +486,7 @@ type serverWebviewWindow struct {
 func (w *serverWebviewWindow) setTitle(title string)           {}
 func (w *serverWebviewWindow) setSize(width, height int)       {}
 func (w *serverWebviewWindow) setAlwaysOnTop(alwaysOnTop bool) {}
+func (w *serverWebviewWindow) setEnableFileDrop(enabled bool)  {}
 func (w *serverWebviewWindow) setURL(url string)               {}
 func (w *serverWebviewWindow) setResizable(resizable bool)     {}
 func (w *serverWebviewWindow) setMinSize(width, height int)    {}
