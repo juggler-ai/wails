@@ -18,6 +18,7 @@ After processing, the content will be moved to the main changelog and this file 
 ## Added
 <!-- New features, capabilities, or enhancements -->
 - Binding generator now emits a `bindings/events` module exporting a typed name constant for every discoverable event registered with `application.RegisterEvent` using a compile-time constant name (e.g. `UserLogin` for `user:login`), usable with `Events.On`/`Emit` without the Vite plugin (#5645)
+- Add `WebviewWindow.SetEnableFileDrop()` to turn native file drop on and off while a window is open, so an application can accept dropped paths in one state and leave the webview's own HTML5 drag-and-drop to the page in another by @julianstorer
 
 ## Changed
 <!-- Changes in existing functionality -->
