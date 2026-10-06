@@ -52,6 +52,32 @@ typedef NS_ENUM(NSInteger, MacLiquidGlassStyle) {
 NSString* acceleratorStringFromKeyEvent(NSEvent* event);
 BOOL dispatchKeyEquivalent(NSEvent* event, NSWindow* window);
 
+// windowDropsEscapeCommand reports whether a window's doCommandBySelector:
+// should drop selector instead of passing it to NSWindow.
+//
+// When Escape reaches a focused WKWebView and the page leaves the keydown
+// unhandled, WebKit runs the key's bound command, cancelOperation:, by sending
+// doCommandBySelector: up the responder chain. NSWindow's implementation turns
+// cancelOperation: (and cancel:) into an exit from fullscreen without ever
+// sending cancelOperation: to the window, so overriding cancelOperation: alone
+// cannot honour DisableEscapeExitsFullscreen for a page with a focused field.
+//
+// A window delegate that implements the selector still receives it, as NSWindow
+// would have arranged. Leaving fullscreen through toggleFullScreen: is
+// unaffected: it does not pass through doCommandBySelector:.
+static inline BOOL windowDropsEscapeCommand(NSWindow<WailsWebviewWindow>* window, SEL selector) {
+    if (selector != @selector(cancelOperation:) && selector != @selector(cancel:)) {
+        return NO;
+    }
+    if (!window.disableEscapeExitsFullscreen) {
+        return NO;
+    }
+    if ((window.styleMask & NSWindowStyleMaskFullScreen) != NSWindowStyleMaskFullScreen) {
+        return NO;
+    }
+    return ![window.delegate respondsToSelector:selector];
+}
+
 void windowSetScreen(void* window, void* screen, int yOffset);
 
 // Liquid Glass support functions

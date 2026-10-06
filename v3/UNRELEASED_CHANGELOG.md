@@ -23,6 +23,7 @@ After processing, the content will be moved to the main changelog and this file 
 
 ## Fixed
 <!-- Bug fixes -->
+- Keep a macOS window in fullscreen when Escape is pressed in a focused text field and `DisableEscapeExitsFullscreen` is set, which WebKit's command for the key previously bypassed by @julianstorer
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
