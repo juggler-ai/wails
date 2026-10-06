@@ -30,6 +30,7 @@ After processing, the content will be moved to the main changelog and this file 
 - Report macOS and GTK displays in the coordinate space their windows are measured in, so a display whose scale factor differs from the primary's no longer reports bounds no window can be found within ([#5409](https://github.com/wailsapp/wails/issues/5409)) by @julianstorer
 - Keep the staged update safe while a restart is pending: a download or a second restart started during shutdown cannot delete or contend for the payload the swap helper is waiting to install by @julianstorer
 - Validate the staged payload before the swap and the installed application before the backup is discarded, so a damaged update rolls back instead of replacing a working application by @julianstorer
+- Fix `DisableEscapeExitsFullscreen` on macOS so Escape in a focused text field keeps the window in fullscreen by @julianstorer
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
