@@ -412,6 +412,26 @@ app := application.New(application.Options{
 
 For more details, see the [Raw Messages Guide](/guides/raw-messages/).
 
+## Webview Storage
+
+By default each platform's webview keeps website data — HTTP cache, cookies, local storage, IndexedDB — on disk between runs. Set `EphemeralWebviewStorage` to keep none of it:
+
+```go
+app := application.New(application.Options{
+    Name:                    "My App",
+    EphemeralWebviewStorage: true,
+})
+```
+
+Use it when the content has no need to remember anything between runs, or when each run serves from a new origin, such as a local server on a random port: the persisted data of one origin is never read by another, so it only accumulates.
+
+| Platform | Mechanism | Scope |
+|---|---|---|
+| macOS | Non-persistent `WKWebsiteDataStore` | One store shared by all windows for the life of the process |
+| Linux | Ephemeral `WebKitNetworkSession` (WebKitGTK 6) or `WebKitWebContext` (WebKitGTK 4.1) | One store shared by all windows for the life of the process |
+| Windows | WebView2 InPrivate mode | WebView2 still creates its user data folder (`Windows.WebviewUserDataPath`); window creation fails on a runtime too old to support InPrivate |
+| iOS, Android | Not supported | — |
+
 ## Platform-Specific Options
 
 ### Windows Options

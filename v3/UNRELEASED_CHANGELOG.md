@@ -17,6 +17,7 @@ After processing, the content will be moved to the main changelog and this file 
 
 ## Added
 <!-- New features, capabilities, or enhancements -->
+- Add `Options.EphemeralWebviewStorage` to stop webviews persisting website data — a non-persistent data store on macOS and Linux, InPrivate mode on Windows by @julianstorer
 
 ## Changed
 <!-- Changes in existing functionality -->
