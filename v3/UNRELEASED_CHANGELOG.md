@@ -18,6 +18,7 @@ After processing, the content will be moved to the main changelog and this file 
 ## Added
 <!-- New features, capabilities, or enhancements -->
 - Add `WebviewWindow.SetEnableFileDrop()` and `IsFileDropEnabled()` to turn native file drop on and off while a window is open, so an application can accept dropped paths in one state and leave the webview's own HTML5 drag-and-drop to the page in another by @julianstorer
+- Add `Options.EphemeralWebviewStorage` to stop webviews persisting website data — a non-persistent data store on macOS and Linux, InPrivate mode on Windows by @julianstorer
 
 ## Changed
 <!-- Changes in existing functionality -->

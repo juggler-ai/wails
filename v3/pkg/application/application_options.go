@@ -62,6 +62,22 @@ type Options struct {
 	// Assets are the application assets to be used.
 	Assets AssetOptions
 
+	// EphemeralWebviewStorage stops webviews persisting website data — HTTP
+	// cache, cookies, local storage, IndexedDB — so nothing a page stores
+	// outlives the application. Use it for content that has no need to
+	// remember anything between runs, or when each run loads a new origin
+	// (a server on a random local port, say), whose persisted data no later
+	// run could use.
+	//
+	// macOS uses one non-persistent WKWebsiteDataStore and Linux one ephemeral
+	// WebKitNetworkSession (WebKitGTK 6) or WebKitWebContext (WebKitGTK 4.1),
+	// shared by every window for the life of the process. Windows creates each
+	// WebView2 controller in InPrivate mode; WebView2 still creates its user
+	// data folder (see Windows.WebviewUserDataPath), and window creation fails
+	// on a runtime too old to support InPrivate rather than persisting.
+	// Not supported on iOS or Android.
+	EphemeralWebviewStorage bool
+
 	// Flags are key value pairs that are available to the frontend.
 	// This is also used by Wails to provide information to the frontend.
 	Flags map[string]any
