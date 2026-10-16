@@ -118,7 +118,7 @@ void signal_connect(void *widget, char *event, void *cb, uintptr_t data);
 // ============================================================================
 
 WebKitWebView* webkit_web_view(GtkWidget *webview);
-GtkWidget* create_webview_with_user_content_manager(WebKitUserContentManager *manager);
+GtkWidget* create_webview_with_user_content_manager(WebKitUserContentManager *manager, WebKitNetworkSession *session);
 
 // ============================================================================
 // Menu system (GMenu/GAction for GTK4)
