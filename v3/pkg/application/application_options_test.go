@@ -164,6 +164,9 @@ func TestOptions_Defaults(t *testing.T) {
 	if opts.DisableDefaultSignalHandler != false {
 		t.Error("DisableDefaultSignalHandler should default to false")
 	}
+	if opts.EphemeralWebviewStorage != false {
+		t.Error("EphemeralWebviewStorage should default to false")
+	}
 }
 
 func TestMacOptions_Defaults(t *testing.T) {
