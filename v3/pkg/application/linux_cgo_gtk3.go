@@ -61,6 +61,18 @@ static void save_window_id(void *object, uint value)
     g_object_set_data((GObject *)object, "windowid", GUINT_TO_POINTER((guint)value));
 }
 
+// A NULL context leaves the web view on the default web context.
+static GtkWidget* create_webview(WebKitUserContentManager *manager, WebKitWebContext *context)
+{
+    if (context == NULL) {
+        return webkit_web_view_new_with_user_content_manager(manager);
+    }
+    return GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW,
+                                   "user-content-manager", manager,
+                                   "web-context", context,
+                                   NULL));
+}
+
 static void save_webview_to_content_manager(void *contentManager, void *webview)
 {
     g_object_set_data(G_OBJECT((WebKitUserContentManager *)contentManager), "webview", webview);
@@ -614,6 +626,26 @@ var (
 
 var registerURIScheme sync.Once
 var fixSignalHandlers sync.Once
+
+var (
+	ephemeralWebContextOnce sync.Once
+	ephemeralWebContext     *C.WebKitWebContext
+)
+
+// webviewWebContext returns the context new web views join: nil, meaning
+// WebKit's persistent default, unless Options.EphemeralWebviewStorage is set.
+// The ephemeral context is created once and never released, so every window
+// shares its in-memory store — and the "wails" URI scheme, which is registered
+// on the first web view's context — for the life of the process.
+func webviewWebContext() *C.WebKitWebContext {
+	if !globalApplication.options.EphemeralWebviewStorage {
+		return nil
+	}
+	ephemeralWebContextOnce.Do(func() {
+		ephemeralWebContext = C.webkit_web_context_new_ephemeral()
+	})
+	return ephemeralWebContext
+}
 
 func init() {
 	gtkSignalToMenuItem = map[uint]*MenuItem{}
@@ -1614,7 +1646,7 @@ func windowNewWebview(parentId uint, gpuPolicy WebviewGpuPolicy) pointer {
 	C.webkit_user_script_unref(childFrameGuard)
 	C.free(unsafe.Pointer(childFrameGuardSource))
 	C.webkit_user_content_manager_register_script_message_handler(manager, c.String("external"))
-	webView := C.webkit_web_view_new_with_user_content_manager(manager)
+	webView := C.create_webview(manager, webviewWebContext())
 
 	fixSignalHandlers.Do(func() {
 		C.install_signal_handlers()
