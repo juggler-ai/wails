@@ -1249,14 +1249,11 @@ func windowNewWebview(parentId uint, gpuPolicy WebviewGpuPolicy) pointer {
 	// WebKitGTK 6.0: register_script_message_handler signature changed
 	C.webkit_user_content_manager_register_script_message_handler(manager, c.String("external"), nil)
 
-	// WebKitGTK 6.0: Create network session first
-	networkSession := C.webkit_network_session_get_default()
-
 	// Create web view with settings
 	settings := C.webkit_settings_new()
 	// WebKitGTK 6.0: webkit_web_view_new_with_user_content_manager() was removed
 	// Use create_webview_with_user_content_manager() helper instead
-	webView := C.create_webview_with_user_content_manager(manager)
+	webView := C.create_webview_with_user_content_manager(manager, webviewNetworkSession())
 
 	C.save_webview_to_content_manager(unsafe.Pointer(manager), unsafe.Pointer(webView))
 	C.save_window_id(unsafe.Pointer(webView), C.uint(parentId))
@@ -1294,8 +1291,26 @@ func windowNewWebview(parentId uint, gpuPolicy WebviewGpuPolicy) pointer {
 		C.schedule_signal_handler_fix()
 	})
 
-	_ = networkSession
 	return pointer(webView)
+}
+
+var (
+	ephemeralNetworkSessionOnce sync.Once
+	ephemeralNetworkSession     *C.WebKitNetworkSession
+)
+
+// webviewNetworkSession returns the session new web views join: nil, meaning
+// WebKit's persistent default, unless Options.EphemeralWebviewStorage is set.
+// The ephemeral session is created once and never released, so every window
+// shares its in-memory store for the life of the process.
+func webviewNetworkSession() *C.WebKitNetworkSession {
+	if !globalApplication.options.EphemeralWebviewStorage {
+		return nil
+	}
+	ephemeralNetworkSessionOnce.Do(func() {
+		ephemeralNetworkSession = C.webkit_network_session_new_ephemeral()
+	})
+	return ephemeralNetworkSession
 }
 
 func gtkBool(b bool) C.gboolean {
