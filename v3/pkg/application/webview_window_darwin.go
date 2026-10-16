@@ -109,7 +109,8 @@ void* windowNew(unsigned int id, int width, int height, bool fraudulentWebsiteWa
 		bool frameless, bool squareCorners, double cornerRadius, bool enableDragAndDrop,
 		struct WebviewPreferences preferences, const char* applicationNameForUserAgent,
 		bool isPanel, struct PanelPreferences panelPreferences, bool isNotchWindow,
-		int notchContentWidth, int notchContentHeight, const char* notchScreenID) {
+		int notchContentWidth, int notchContentHeight, const char* notchScreenID,
+		bool ephemeralWebviewStorage) {
 	NSWindow<WailsWebviewWindow>* window = createNativeWindow(width, height, frameless,
 		squareCorners, cornerRadius, isPanel, panelPreferences, isNotchWindow);
 
@@ -144,6 +145,18 @@ void* windowNew(unsigned int id, int width, int height, bool fraudulentWebsiteWa
 	NSRect frame = NSMakeRect(0, 0, width, height);
 	WKWebViewConfiguration* config = [[WKWebViewConfiguration alloc] init];
 	[config autorelease];
+
+	// Each nonPersistentDataStore call returns a new, empty store, so one is
+	// kept for the process: windows on the same origin then share cookies and
+	// storage, as they do with the persistent default. windowNew runs on the
+	// main thread, so the lazy initialisation needs no lock.
+	if (ephemeralWebviewStorage) {
+		static WKWebsiteDataStore *ephemeralDataStore = nil;
+		if (ephemeralDataStore == nil) {
+			ephemeralDataStore = [[WKWebsiteDataStore nonPersistentDataStore] retain];
+		}
+		config.websiteDataStore = ephemeralDataStore;
+	}
 
 	// Set preferences
     if (preferences.TabFocusesLinks != NULL) {
@@ -1743,6 +1756,7 @@ func (w *macosWebviewWindow) run() {
 			C.int(notchContentWidth),
 			C.int(notchContentHeight),
 			cNotchScreenID,
+			C.bool(globalApplication.options.EphemeralWebviewStorage),
 		)
 		if macOptions.DisableEscapeExitsFullscreen {
 			C.windowSetDisableEscapeExitsFullscreen(w.nsWindow, C.bool(true))
