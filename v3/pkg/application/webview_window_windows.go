@@ -461,6 +461,7 @@ func (w *windowsWebviewWindow) newChromium() *edge.Chromium {
 	chromium := edge.NewChromium()
 	chromium.NonClientRegionSupportEnabled = options.Windows.NonClientRegionSupport
 	chromium.CompositionControllerEnabled = options.Windows.WebView2CompositionHosting
+	chromium.InPrivate = globalApplication.options.EphemeralWebviewStorage
 	chromium.SetCursorChangedCallback(w.applyCompositionCursor)
 	if globalApplication.options.ErrorHandler != nil {
 		chromium.SetErrorCallback(globalApplication.options.ErrorHandler)

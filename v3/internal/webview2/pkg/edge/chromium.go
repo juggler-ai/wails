@@ -85,6 +85,11 @@ type Chromium struct {
 	AdditionalBrowserArgs         []string
 	NonClientRegionSupportEnabled bool
 	CompositionControllerEnabled  bool
+	// InPrivate creates the controller in InPrivate mode, WebView2's
+	// off-the-record profile, so the profile's browsing data is not persisted.
+	// Requires ICoreWebView2Environment10; on an older runtime creating the
+	// controller fails rather than silently persisting.
+	InPrivate bool
 
 	// permissions
 	permissions      map[CoreWebView2PermissionKind]CoreWebView2PermissionState
@@ -470,7 +475,7 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 
 	var err error
 	if !e.CompositionControllerEnabled {
-		err = env.CreateCoreWebView2Controller(e.hwnd, e.controllerCompleted)
+		err = e.createCoreWebView2Controller(env)
 	} else {
 		err = e.createCoreWebView2CompositionController(env)
 		if err != nil {
@@ -510,7 +515,45 @@ func (e *Chromium) createCoreWebView2CompositionController(env *ICoreWebView2Env
 	}
 	e.compositionHost = host
 
+	if e.InPrivate {
+		return e.withInPrivateOptions(env, func(env10 *ICoreWebView2Environment10, options *ICoreWebView2ControllerOptions) error {
+			return env10.CreateCoreWebView2CompositionControllerWithOptions(e.hwnd, options, e.compositionControllerCompleted)
+		})
+	}
 	return env3.CreateCoreWebView2CompositionController(e.hwnd, e.compositionControllerCompleted)
+}
+
+// createCoreWebView2Controller starts creating the windowed (HWND) controller,
+// honouring InPrivate.
+func (e *Chromium) createCoreWebView2Controller(env *ICoreWebView2Environment) error {
+	if e.InPrivate {
+		return e.withInPrivateOptions(env, func(env10 *ICoreWebView2Environment10, options *ICoreWebView2ControllerOptions) error {
+			return env10.CreateCoreWebView2ControllerWithOptions(e.hwnd, options, e.controllerCompleted)
+		})
+	}
+	return env.CreateCoreWebView2Controller(e.hwnd, e.controllerCompleted)
+}
+
+// withInPrivateOptions calls create with controller options that enable
+// InPrivate mode. Both interfaces are released once create returns, because
+// WebView2 has read the options by then.
+func (e *Chromium) withInPrivateOptions(env *ICoreWebView2Environment, create func(*ICoreWebView2Environment10, *ICoreWebView2ControllerOptions) error) error {
+	env10 := env.GetICoreWebView2Environment10()
+	if env10 == nil {
+		return fmt.Errorf("InPrivate mode needs a newer WebView2 runtime: %w", UnsupportedCapabilityError)
+	}
+	defer env10.Release()
+
+	options, err := env10.CreateCoreWebView2ControllerOptions()
+	if err != nil {
+		return fmt.Errorf("creating WebView2 controller options: %w", err)
+	}
+	defer options.Release()
+
+	if err := options.PutIsInPrivateModeEnabled(true); err != nil {
+		return fmt.Errorf("enabling WebView2 InPrivate mode: %w", err)
+	}
+	return create(env10, options)
 }
 
 func (e *Chromium) CreateCoreWebView2CompositionControllerCompleted(res uintptr, compositionController *ICoreWebView2CompositionController) uintptr {
@@ -570,7 +613,7 @@ func (e *Chromium) fallbackToCoreWebView2Controller(reason error) error {
 	if e.environment == nil {
 		return fmt.Errorf("cannot fall back to WebView2 HWND controller without an environment: %w", reason)
 	}
-	if err := e.environment.CreateCoreWebView2Controller(e.hwnd, e.controllerCompleted); err != nil {
+	if err := e.createCoreWebView2Controller(e.environment); err != nil {
 		return fmt.Errorf("composition hosting failed (%v), and HWND controller fallback failed: %w", reason, err)
 	}
 	return nil
