@@ -32,6 +32,7 @@ After processing, the content will be moved to the main changelog and this file 
 - Keep the staged update safe from a download starting while a restart is pending, so a check for updates during shutdown cannot delete the payload the swap helper is waiting to install by @julianstorer
 - Validate the staged payload before the swap and the installed application before the backup is discarded, so a damaged update rolls back instead of replacing a working application by @julianstorer
 - Keep a macOS window in fullscreen when Escape is pressed in a focused text field and `DisableEscapeExitsFullscreen` is set, which WebKit's command for the key previously bypassed by @julianstorer
+- Apply the frame decorations of a frameless Windows window when it is created, so a window shown while WebView2 is still initialising has its border, shadow and rounded corners without waiting to be reactivated by @julianstorer
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
