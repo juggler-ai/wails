@@ -33,6 +33,7 @@ After processing, the content will be moved to the main changelog and this file 
 - Validate the staged payload before the swap and the installed application before the backup is discarded, so a damaged update rolls back instead of replacing a working application by @julianstorer
 - Keep a macOS window in fullscreen when Escape is pressed in a focused text field and `DisableEscapeExitsFullscreen` is set, which WebKit's command for the key previously bypassed by @julianstorer
 - Apply the frame decorations of a frameless Windows window when it is created, so a window shown while WebView2 is still initialising has its border, shadow and rounded corners without waiting to be reactivated by @julianstorer
+- Fix the WebView2 handler-lifetime tests aborting under `go test -race`: they no longer turn native addresses back into Go pointers, which checkptr rejects, by @julianstorer
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
