@@ -138,6 +138,11 @@ static void destroyApp(void) {
 	[NSApp terminate:nil];
 }
 
+// replyToTerminate answers a terminate request held open with NSTerminateLater.
+static void replyToTerminate(bool quit) {
+	[NSApp replyToApplicationShouldTerminate:quit];
+}
+
 // Set the application menu
 static void setApplicationMenu(void *menu) {
 	NSMenu *nsMenu = (__bridge NSMenu *)menu;
@@ -523,10 +528,20 @@ func processMenuItemClick(menuID C.uint) {
 	menuItemClicked <- uint(menuID)
 }
 
+// shouldQuitApplication answers applicationShouldTerminate: with a quitReply.
+// A decision ShouldQuitLater makes later is the reply to the held-open request,
+// given on the main thread, after the shutdown when it is to quit.
+//
 //export shouldQuitApplication
-func shouldQuitApplication() C.bool {
-	// TODO: This should be configurable
-	return C.bool(globalApplication.shouldQuit())
+func shouldQuitApplication() C.int {
+	return C.int(globalApplication.askShouldQuit(func(quit bool) {
+		InvokeAsync(func() {
+			if quit {
+				globalApplication.cleanup()
+			}
+			C.replyToTerminate(C.bool(quit))
+		})
+	}))
 }
 
 //export cleanup

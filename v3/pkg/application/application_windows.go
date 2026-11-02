@@ -241,9 +241,19 @@ func (m *windowsApp) run() error {
 }
 
 func (m *windowsApp) destroy() {
-	if !globalApplication.shouldQuit() {
-		return
+	reply := globalApplication.askShouldQuit(func(quit bool) {
+		if quit {
+			InvokeAsync(m.quit)
+		}
+	})
+	if reply == quitNow {
+		m.quit()
 	}
+}
+
+// quit shuts the application down and ends its main loop, once destroy's
+// request to quit has been granted.
+func (m *windowsApp) quit() {
 	globalApplication.cleanup()
 
 	// Release icons, if any
