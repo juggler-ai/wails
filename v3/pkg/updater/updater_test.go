@@ -1378,3 +1378,53 @@ func slicesEqualIgnoringProgressRepeats(a, b []string) bool {
 
 func osRemoveAll(p string) error { return removeAllOS(p) }
 func parentOf(p string) string   { return filepath.Dir(p) }
+
+// The swap helper's log is the only record of what happened to an
+// installation it failed to update, so an application can put it where its
+// own logs are kept rather than in a per-process temporary file.
+func TestRestart_HelperLogPathFromConfig(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "logs", "update-helper.log")
+	var spawned *exec.Cmd
+	t.Cleanup(updater.SetSelfExecutableForTest(os.Executable))
+	t.Cleanup(updater.SetNewDetachedCommandForTest(func(path string) *exec.Cmd {
+		spawned = exec.Command(path, "-test.run=^$")
+		return spawned
+	}))
+	t.Cleanup(updater.SetWaitForHelperReadyForTest(func(string, time.Duration) error {
+		return nil
+	}))
+
+	body := []byte("payload")
+	p := &fakeProvider{name: "p", rel: &updater.Release{
+		Version:  "2.0.0",
+		Artifact: updater.Artifact{Filename: "app.bin", Size: int64(len(body))},
+	}, body: body}
+	u := updater.New(&fakeHost{})
+	if err := u.Init(updater.Config{
+		CurrentVersion: "1.0.0",
+		Providers:      []updater.Provider{p},
+		HelperLogPath:  logPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.DownloadAndInstall(context.Background()); err != nil {
+		t.Fatalf("DownloadAndInstall: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(u.DownloadedPath())) })
+	if err := u.Restart(context.Background()); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if spawned == nil {
+		t.Fatal("no helper was spawned")
+	}
+	want := "WAILS_UPDATER_HELPER_LOG=" + logPath
+	for _, kv := range spawned.Env {
+		if kv == want {
+			return
+		}
+	}
+	t.Errorf("helper environment lacks %q", want)
+}

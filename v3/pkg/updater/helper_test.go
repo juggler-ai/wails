@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -388,4 +389,20 @@ func dirNamesOf(t *testing.T, dir string) []string {
 		names = append(names, e.Name())
 	}
 	return names
+}
+
+// A configured helper log is a fixed file that outlives one update: it is
+// created along with its directory, and each run is appended to it, so the
+// record of an earlier failed update survives the next attempt.
+func TestOpenHelperLog_CreatesDirectoryAndAppends(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", "update-helper.log")
+	for _, line := range []string{"first run", "second run"} {
+		lg := openHelperLog(path)
+		lg.logf("%s", line)
+		lg.Close()
+	}
+	got := string(readFile(t, path))
+	if !strings.Contains(got, "first run") || !strings.Contains(got, "second run") {
+		t.Errorf("log holds %q (want both runs)", got)
+	}
 }
