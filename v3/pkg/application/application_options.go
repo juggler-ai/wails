@@ -93,6 +93,19 @@ type Options struct {
 	// If the function returns false, the application will not quit.
 	ShouldQuit func() bool
 
+	// ShouldQuitLater is ShouldQuit for an application that decides
+	// asynchronously, and is used in its place when set. It is called on the
+	// main thread when something asks the application to quit, and must
+	// eventually call decide exactly once, from any goroutine: decide(true)
+	// quits, decide(false) does not. While the decision is awaited, a further
+	// request to quit joins the one held open, and a call to App.Quit counts as
+	// decide(true).
+	//
+	// On macOS the request is held open until then (NSTerminateLater), so a quit
+	// the system sends at log out, restart or shut down waits for the decision,
+	// where ShouldQuit returning false cancels it and with it the log out.
+	ShouldQuitLater func(decide func(quit bool))
+
 	// RawMessageHandler is called when the frontend sends a raw message.
 	// This is useful for implementing custom frontend-to-backend communication.
 	RawMessageHandler func(window Window, message string, originInfo *OriginInfo)

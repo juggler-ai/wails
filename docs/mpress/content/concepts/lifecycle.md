@@ -313,9 +313,33 @@ If `ShouldQuit` is not set, the application will quit immediately when requested
 - The process is killed (SIGKILL, Task Manager force-quit)
 - `os.Exit()` is called directly
 
+### ShouldQuitLater
+
+`ShouldQuitLater` is `ShouldQuit` for an application that cannot answer at once: it needs to finish work first, or wait on a check that should not block the main thread. When set, it is used in place of `ShouldQuit`. It is called on the main thread with a `decide` function, and must eventually call `decide` exactly once, from any goroutine: `decide(true)` quits, `decide(false)` does not.
+
+```go
+app := application.New(application.Options{
+    ShouldQuitLater: func(decide func(quit bool)) {
+        if !hasUnsavedChanges() {
+            decide(true) // Decided at once: the quit goes ahead now
+            return
+        }
+        go func() {
+            decide(saveEverything() == nil) // Quit once saved; stay if saving failed
+        }()
+    },
+})
+```
+
+While the decision is awaited, the quit request is held open:
+
+- A further quit request joins it, and is answered by the same decision.
+- A call to `app.Quit()` decides it: the application quits.
+- On macOS the application replies `NSTerminateLater`. A quit the system sends at log out, restart or shut down waits for the decision. With `ShouldQuit`, returning `false` cancels the request, and with it the log out.
+
 ### OnShutdown
 
-The `OnShutdown` callback is called when the application is confirmed to be quitting (after `ShouldQuit` returns `true`, if set). Use this for cleanup tasks like saving state, closing database connections, or releasing resources.
+The `OnShutdown` callback is called when the application is confirmed to be quitting (after `ShouldQuit` returns `true`, or `ShouldQuitLater` decides `true`, if set). Use this for cleanup tasks like saving state, closing database connections, or releasing resources.
 
 ```go
 app := application.New(application.Options{
@@ -714,6 +738,7 @@ func (s *WorkerService) runWorker(ctx context.Context) {
 | `ServiceShutdown` | During shutdown, after `OnShutdown` | No | Cleanup |
 | `OnShutdown` | When quit confirmed | No | Application cleanup |
 | `ShouldQuit` | When quit requested | Yes (return false) | Confirm quit |
+| `ShouldQuitLater` | When quit requested | Yes (`decide(false)`) | Confirm quit asynchronously |
 | `RegisterHook(WindowClosing)` | When window close requested | Yes (`e.Cancel()`) | Prevent window close |
 | `OnWindowEvent` | When event occurs | No | React to events |
 | `OnApplicationEvent` | When event occurs | No | React to events |
