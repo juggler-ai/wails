@@ -3,7 +3,7 @@
 #import "../events/events_darwin.h"
 #import <CoreServices/CoreServices.h> // For Apple Event constants
 extern bool hasListeners(unsigned int);
-extern bool shouldQuitApplication();
+extern int shouldQuitApplication();
 extern void cleanup();
 extern void handleSecondInstanceData(char * message);
 @implementation AppDelegate
@@ -58,8 +58,14 @@ extern void handleSecondInstanceData(char * message);
     }
 }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
-    if( ! shouldQuitApplication() ) {
+    // 0 cancel, 1 now, 2 later (quitReply). For later, the decision replies
+    // with replyToApplicationShouldTerminate: once it is made.
+    int reply = shouldQuitApplication();
+    if( reply == 0 ) {
         return NSTerminateCancel;
+    }
+    if( reply == 2 ) {
+        return NSTerminateLater;
     }
     if( !self.shuttingDown ) {
         self.shuttingDown = true;

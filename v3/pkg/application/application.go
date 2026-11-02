@@ -511,6 +511,11 @@ type App struct {
 	shutdownLock        sync.Mutex
 	serviceShutdownLock sync.Mutex
 
+	// pendingQuit is a request to quit awaiting ShouldQuitLater's decision
+	// (askShouldQuit), guarded by quitLock.
+	pendingQuit *pendingQuit
+	quitLock    sync.Mutex
+
 	// Shutdown tasks are run when the application is shutting down.
 	// They are run in the order they are added and run on the main thread.
 	// The application option `OnShutdown` is run first.
@@ -999,7 +1004,12 @@ func (a *App) cleanup() {
 	})
 }
 
+// Quit quits the application. While a request to quit awaits ShouldQuitLater's
+// decision, Quit decides it: the application quits.
 func (a *App) Quit() {
+	if a.answerPendingQuit(true) {
+		return
+	}
 	if a.impl != nil {
 		InvokeSync(a.impl.destroy)
 	}

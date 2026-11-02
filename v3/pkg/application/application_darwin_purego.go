@@ -166,14 +166,19 @@ func registerAppDelegateClass() id {
 			Fn: func(self objc.ID, cmd objc.SEL, sender objc.ID) int {
 				const nsTerminateCancel = 0
 				const nsTerminateNow = 1
+				const nsTerminateLater = 2
 				// cgo keeps a shuttingDown flag on the delegate so cleanup()
 				// runs at most once even if AppKit re-enters.
 				if appShuttingDown.Swap(true) {
 					return nsTerminateNow
 				}
-				if !shouldQuitApplication() {
+				switch shouldQuitApplication() {
+				case quitCancel:
 					appShuttingDown.Store(false)
 					return nsTerminateCancel
+				case quitLater:
+					appShuttingDown.Store(false)
+					return nsTerminateLater
 				}
 				cleanup()
 				return nsTerminateNow
@@ -558,7 +563,19 @@ func processWindowKeyDownEvent(windowID uint, acceleratorString string) {
 	windowKeyEvents <- &windowKeyEvent{windowId: windowID, acceleratorString: acceleratorString}
 }
 
-func shouldQuitApplication() bool { return globalApplication.shouldQuit() }
+// shouldQuitApplication answers applicationShouldTerminate:. A decision
+// ShouldQuitLater makes later is the reply to the held-open request, given on
+// the main thread, after the shutdown when it is to quit.
+func shouldQuitApplication() quitReply {
+	return globalApplication.askShouldQuit(func(quit bool) {
+		runOnMain(func() {
+			if quit {
+				cleanup()
+			}
+			class("NSApplication").send("sharedApplication").send("replyToApplicationShouldTerminate:", quit)
+		})
+	})
+}
 
 func cleanup() { globalApplication.cleanup() }
 
