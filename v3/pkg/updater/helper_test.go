@@ -323,3 +323,69 @@ func makeAppBundle(t *testing.T, root, payload string) {
 	}
 	writeFile(t, filepath.Join(root, "Contents", "Info.plist"), []byte("<plist><dict></dict></plist>"))
 }
+
+// After a failed swap the original is relaunched in place only if it is still
+// an application. Launching is no evidence of that — macOS's `open` starts
+// whether or not the bundle can run — so a hollow original must be replaced by
+// the backup, and the backup must not be thrown away beforehand.
+func TestRecoverFailedSwap_HollowOriginal_RestoresBackup(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "App.app")
+	backup := target + ".bak"
+	if err := os.MkdirAll(filepath.Join(target, "Contents", "Resources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeAppBundle(t, backup, "old-bin")
+
+	l := &fakeLauncher{}
+	lg := openHelperLog(filepath.Join(dir, "log"))
+	defer lg.Close()
+	code := recoverFailedSwap(target, backup, false, l, lg)
+	if code != 13 {
+		t.Fatalf("code: %d (want 13 — backup restored)", code)
+	}
+	if got := readFile(t, filepath.Join(target, "Contents", "MacOS", "exe")); string(got) != "old-bin" {
+		t.Errorf("bundle exe: %q (want old-bin)", got)
+	}
+	if len(l.calls) != 1 || l.calls[0] != target {
+		t.Errorf("launcher calls: %+v (want one launch of %q)", l.calls, target)
+	}
+}
+
+// A replace that reports it could not put the original back is believed even
+// when what it left still looks like an application: the shape check cannot
+// see a bundle that lost only its resources.
+func TestRecoverFailedSwap_Disturbed_RestoresBackup(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "App.app")
+	backup := target + ".bak"
+	makeAppBundle(t, target, "partial-bin")
+	makeAppBundle(t, backup, "old-bin")
+
+	l := &fakeLauncher{}
+	lg := openHelperLog(filepath.Join(dir, "log"))
+	defer lg.Close()
+	code := recoverFailedSwap(target, backup, true, l, lg)
+	if code != 13 {
+		t.Fatalf("code: %d (want 13 — backup restored)", code)
+	}
+	if got := readFile(t, filepath.Join(target, "Contents", "MacOS", "exe")); string(got) != "old-bin" {
+		t.Errorf("bundle exe: %q (want old-bin)", got)
+	}
+	if len(dirNamesOf(t, dir)) != 2 {
+		t.Errorf("dir entries: %q (want App.app and the log only)", dirNamesOf(t, dir))
+	}
+}
+
+func dirNamesOf(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
