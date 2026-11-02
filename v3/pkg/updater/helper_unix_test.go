@@ -451,3 +451,67 @@ func TestRunHelperSwap_AllReplaceAttemptsFail_RelaunchesIntactOriginal(t *testin
 		t.Errorf("backup should be cleaned up after relaunch: %v", err)
 	}
 }
+
+// readOnlyDir creates dir holding one file, named "file", and makes it
+// read-only, so the current user can neither add an entry to it nor remove
+// the file. Every directory under base is made writable again before the
+// test's temporary directory is removed.
+func readOnlyDir(t *testing.T, base, dir string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root adds and removes entries in a read-only directory regardless")
+	}
+	writeFile(t, filepath.Join(dir, "file"), []byte("x"))
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = filepath.Walk(base, func(path string, fi os.FileInfo, err error) error {
+			if err == nil && fi.IsDir() {
+				_ = os.Chmod(path, 0o755)
+			}
+			return nil
+		})
+	})
+}
+
+// A bundle may ship a read-only directory. The backup copy must reproduce it,
+// contents and permissions both, instead of failing to fill it.
+func TestCopyTree_ReadOnlyDirectory(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "App.app")
+	dst := filepath.Join(dir, "App.app.bak")
+	makeAppBundle(t, src, "bin")
+	readOnlyDir(t, dir, filepath.Join(src, "Contents", "Resources", "locked"))
+
+	if err := copyTree(src, dst); err != nil {
+		t.Fatalf("copyTree: %v", err)
+	}
+	locked := filepath.Join(dst, "Contents", "Resources", "locked")
+	if got := readFile(t, filepath.Join(locked, "file")); string(got) != "x" {
+		t.Errorf("copied file: %q (want x)", got)
+	}
+	fi, err := os.Stat(locked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o555 {
+		t.Errorf("copied directory mode: %v (want %v)", got, os.FileMode(0o555))
+	}
+}
+
+// The backup of a bundle with a read-only directory has one too, and must
+// still be removed once it is no longer needed.
+func TestRemoveTree_ReadOnlyDirectory(t *testing.T) {
+	dir := t.TempDir()
+	tree := filepath.Join(dir, "App.app.bak")
+	makeAppBundle(t, tree, "bin")
+	readOnlyDir(t, dir, filepath.Join(tree, "Contents", "Resources", "locked"))
+
+	if err := removeTree(tree); err != nil {
+		t.Fatalf("removeTree: %v", err)
+	}
+	if _, err := os.Lstat(tree); !os.IsNotExist(err) {
+		t.Errorf("tree still present: %v", err)
+	}
+}

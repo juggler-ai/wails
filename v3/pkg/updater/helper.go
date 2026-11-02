@@ -186,7 +186,7 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 	}
 
 	backup := target + ".bak"
-	_ = os.RemoveAll(backup)
+	_ = removeTree(backup)
 
 	lg.logf("backing up %s → %s", target, backup)
 	if err := copyAny(target, backup); err != nil {
@@ -249,7 +249,7 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 		lg.logf("all swap attempts exhausted — relaunching intact original")
 		if _, err := os.Stat(target); err == nil {
 			if err := l.launch(target); err == nil {
-				if err := os.RemoveAll(backup); err != nil {
+				if err := removeTree(backup); err != nil {
 					lg.logf("backup cleanup: %v (non-fatal)", err)
 				}
 				return 13
@@ -292,7 +292,7 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 	}
 
 	// Best-effort backup cleanup. The replaced app is now running.
-	if err := os.RemoveAll(backup); err != nil {
+	if err := removeTree(backup); err != nil {
 		lg.logf("backup cleanup: %v (non-fatal)", err)
 	}
 
@@ -321,6 +321,23 @@ func restoreFromBackup(backup, target string, l launcher) error {
 		return fmt.Errorf("restore: %w", err)
 	}
 	return l.launch(target)
+}
+
+// removeTree removes a tree the helper created itself. A read-only directory
+// inside it — a bundle may ship one, and copyTree reproduces it — refuses the
+// removal of its entries, so after a failure every directory is made
+// owner-writable and the removal is tried once more.
+func removeTree(path string) error {
+	if err := os.RemoveAll(path); err == nil {
+		return nil
+	}
+	_ = filepath.Walk(path, func(p string, fi os.FileInfo, err error) error {
+		if err == nil && fi.IsDir() {
+			_ = os.Chmod(p, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(path)
 }
 
 // copyAny dispatches between file and directory copies. macOS .app bundles
@@ -357,14 +374,25 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	return out.Close()
 }
 
+// copyTree copies the directory src to dst. Each directory is created
+// writable and given its source's permissions only once it has been filled: a
+// read-only directory in the source would otherwise refuse the copy of its own
+// contents.
 func copyTree(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dst, info.Mode()); err != nil {
+	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
 	}
+	if err := fillTree(src, dst); err != nil {
+		return err
+	}
+	return os.Chmod(dst, info.Mode().Perm())
+}
+
+func fillTree(src, dst string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
