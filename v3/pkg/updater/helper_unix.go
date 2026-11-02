@@ -44,27 +44,44 @@ func platformIsAlive(pid int) bool {
 // file destination, hence no RemoveAll is needed on the common file path —
 // the original stays in place unless the move itself succeeds. macOS .app
 // bundles are directories: those cannot be renamed onto a non-empty
-// directory nor safely merged via copy, so the slot is cleared first and the
-// move retried once for a clean replace.
+// directory nor safely merged via copy, so the slot has to be emptied first.
 //
-// The payload is re-checked first, on every attempt: clearing a directory
-// slot is irreversible without the backup, and neither rename nor the copy
-// fallback can tell a populated directory from a hollow one, so this is the
-// last point at which refusing costs nothing. A refusal wraps
+// It is emptied by renaming the original aside, never by deleting it. A
+// deletion that stops partway — an entry the user may not unlink, a file held
+// open by another process, a network volume — leaves a bundle that is neither
+// the old application nor the new one, and nothing that can undo it. A rename
+// either happens whole or not at all, so until the payload is in place the
+// original is intact under its aside name, and a failed move puts it back.
+// Only a failure to put it back returns errTargetDisturbed. The aside copy is
+// removed once the payload is in; the caller still holds its own backup.
+//
+// The payload is re-checked first, on every attempt: neither rename nor the
+// copy fallback can tell a populated directory from a hollow one, so this is
+// the last point at which refusing costs nothing. A refusal wraps
 // errNotInstallable.
 func replaceTarget(target, newPath string) error {
 	if err := validatePayloadForTarget(newPath, target); err != nil {
 		return err
 	}
-	// Directory-over-directory needs an empty slot so the retry lands clean
-	// instead of merging stale files from the old bundle into the new one.
-	if bothDirs(target, newPath) {
-		if err := os.RemoveAll(target); err != nil {
-			return err
-		}
+	if !bothDirs(target, newPath) {
 		return renameOrCopy(newPath, target)
 	}
-	return renameOrCopy(newPath, target)
+	aside, err := moveAside(target)
+	if err != nil {
+		return err
+	}
+	if err := renameOrCopy(newPath, target); err != nil {
+		// The copy fallback may have left part of the payload in the slot.
+		if rerr := os.RemoveAll(target); rerr != nil {
+			return fmt.Errorf("%w: %w (clearing the partial copy: %v)", errTargetDisturbed, err, rerr)
+		}
+		if rerr := os.Rename(aside, target); rerr != nil {
+			return fmt.Errorf("%w: %w (moving the original back: %v)", errTargetDisturbed, err, rerr)
+		}
+		return err
+	}
+	_ = removeTree(aside)
+	return nil
 }
 
 // renameOrCopy attempts to move src to dst via rename. If it fails

@@ -210,17 +210,23 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 
 	// Retry the swap up to 20 times in case the OS still holds a transient
 	// lock on the target. The actual replace strategy is platform-specific —
-	// Unix unlinks and renames in place (open file handles keep working
-	// because the inode lives on); Windows moves the target aside because
-	// it can't delete a recently-running executable but it CAN rename it,
-	// even with the loader still mapping its image.
-	swapped := false
+	// Unix renames in place (open file handles keep working because the inode
+	// lives on) and moves a bundle directory aside first; Windows moves the
+	// target aside because it can't delete a recently-running executable but
+	// it CAN rename it, even with the loader still mapping its image.
+	swapped, disturbed := false, false
 	for i := 0; i < 20; i++ {
 		// replaceTarget re-validates the payload on every attempt, immediately
 		// before it disturbs the target. A payload that has stopped being
-		// installable will not recover, so that ends the loop at once.
+		// installable will not recover, so that ends the loop at once, as does
+		// a failure that left the target in a state it could not undo: the slot
+		// no longer holds the original, and only the backup can put it back.
 		if err := replaceTarget(target, newPath); err != nil {
 			lg.logf("replace (attempt %d): %v", i+1, err)
+			if errors.Is(err, errTargetDisturbed) {
+				disturbed = true
+				break
+			}
 			if errors.Is(err, errNotInstallable) {
 				break
 			}
@@ -240,31 +246,7 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 	}
 
 	if !swapped {
-		// Every replace attempt left the original executable in place: the
-		// Windows rename-aside is reverted on failure, and the Unix file
-		// rename only takes effect on success. Calling restoreFromBackup
-		// here would first os.RemoveAll(target), which fails on the very
-		// lock that blocked the swap (and, on Unix .app bundles, needlessly
-		// deletes an intact original). Relaunch the original instead.
-		lg.logf("all swap attempts exhausted — relaunching intact original")
-		if _, err := os.Stat(target); err == nil {
-			if err := l.launch(target); err == nil {
-				if err := removeTree(backup); err != nil {
-					lg.logf("backup cleanup: %v (non-fatal)", err)
-				}
-				return 13
-			} else {
-				lg.logf("relaunch original failed: %v — restoring backup", err)
-			}
-		}
-		// The target slot is missing (e.g. a directory swap cleared it
-		// before the move failed); fall back to the backup.
-		lg.logf("all swap attempts exhausted — restoring backup")
-		if err := restoreFromBackup(backup, target, l); err != nil {
-			lg.logf("restore failed: %v", err)
-			return 14
-		}
-		return 13
+		return recoverFailedSwap(target, backup, disturbed, l, lg)
 	}
 
 	// The payload is now installed, and the backup is still standing. This is
@@ -313,20 +295,90 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 	return 0
 }
 
+// recoverFailedSwap ends a helper run in which no replace attempt succeeded.
+//
+// The original is relaunched where it stands only when it is known to be
+// intact: no attempt reported leaving it disturbed, and it still has the shape
+// of an application. Otherwise the backup is restored. A launch that reports
+// success is not that evidence — on macOS the launcher starts `open`, which
+// starts whether or not the bundle can run — so the backup is discarded only
+// once the original has passed the check.
+//
+// An intact original is relaunched rather than restored because restoring
+// must first clear the slot, and on Windows the lock that defeated the swap
+// defeats that too.
+func recoverFailedSwap(target, backup string, disturbed bool, l launcher, lg *helperLog) int {
+	switch err := validatePayload(target); {
+	case disturbed:
+		lg.logf("all swap attempts failed and the original could not be put back — restoring backup")
+	case err != nil:
+		lg.logf("all swap attempts failed and the original is no longer intact (%v) — restoring backup", err)
+	default:
+		err := l.launch(target)
+		if err == nil {
+			lg.logf("all swap attempts failed — relaunched the intact original")
+			if err := removeTree(backup); err != nil {
+				lg.logf("backup cleanup: %v (non-fatal)", err)
+			}
+			return 13
+		}
+		lg.logf("all swap attempts failed and relaunching the original failed (%v) — restoring backup", err)
+	}
+	if err := restoreFromBackup(backup, target, l); err != nil {
+		lg.logf("restore failed: %v", err)
+		return 14
+	}
+	lg.logf("backup restored")
+	return 13
+}
+
+// restoreFromBackup puts the backup into target's slot and launches it.
+//
+// Whatever occupies the slot is moved aside rather than deleted. The failure
+// that led here — an entry the helper may not unlink, a lock, a volume that
+// drops part of a delete — is as likely to stop a deletion, and one that stops
+// partway leaves no working application in the slot. A rename needs only the
+// install directory to be writable, which creating the backup there has
+// already shown. Deleting is the fallback for a slot that cannot be renamed;
+// what was moved aside is removed afterwards, best effort.
 func restoreFromBackup(backup, target string, l launcher) error {
-	if err := os.RemoveAll(target); err != nil {
-		return fmt.Errorf("remove broken target: %w", err)
+	if _, err := os.Lstat(backup); err != nil {
+		return fmt.Errorf("backup unavailable: %w", err)
+	}
+	aside := ""
+	if _, err := os.Lstat(target); err == nil {
+		if aside, err = moveAside(target); err != nil {
+			if err := os.RemoveAll(target); err != nil {
+				return fmt.Errorf("clear broken target: %w", err)
+			}
+		}
 	}
 	if err := os.Rename(backup, target); err != nil {
+		if aside != "" {
+			_ = os.Rename(aside, target)
+		}
 		return fmt.Errorf("restore: %w", err)
+	}
+	if aside != "" {
+		_ = removeTree(aside)
 	}
 	return l.launch(target)
 }
 
-// removeTree removes a tree the helper created itself. A read-only directory
-// inside it — a bundle may ship one, and copyTree reproduces it — refuses the
-// removal of its entries, so after a failure every directory is made
-// owner-writable and the removal is tried once more.
+// moveAside renames path to an unused sibling and returns the new name. The
+// sibling is in the same directory, so the rename cannot cross a volume.
+func moveAside(path string) (string, error) {
+	aside := fmt.Sprintf("%s.old-%d", path, time.Now().UnixNano())
+	if err := os.Rename(path, aside); err != nil {
+		return "", err
+	}
+	return aside, nil
+}
+
+// removeTree removes a tree the helper created or moved aside itself. A
+// read-only directory inside it — a bundle may ship one, and copyTree
+// reproduces it — refuses the removal of its entries, so after a failure every
+// directory is made owner-writable and the removal is tried once more.
 func removeTree(path string) error {
 	if err := os.RemoveAll(path); err == nil {
 		return nil
@@ -492,6 +544,10 @@ var (
 	// ErrNotReady is returned by Restart when there is no installed update
 	// staged for launch.
 	ErrNotReady = errors.New("updater: nothing to restart into (call DownloadAndInstall first)")
+	// errTargetDisturbed marks a replace that failed after it had moved the
+	// installed application and could not put it back. Retrying cannot help:
+	// the slot no longer holds the original, and only the backup can.
+	errTargetDisturbed = errors.New("the installed application was moved and could not be put back")
 	// ErrHelperNotReady is returned when the replacement helper does not
 	// acknowledge that it reached helper mode before the application exits.
 	ErrHelperNotReady = errors.New("updater: helper did not signal readiness")

@@ -71,7 +71,7 @@ func TestIsCrossDevice(t *testing.T) {
 }
 
 // TestBothDirs verifies the directory-pair detection that selects the
-// clear-slot-then-retry replace path for .app bundle swaps.
+// move-aside replace path for .app bundle swaps.
 func TestBothDirs(t *testing.T) {
 	dir := t.TempDir()
 	fileA := filepath.Join(dir, "a.bin")
@@ -362,9 +362,9 @@ func TestRenameOrCopy_StagingFailurePreservesDst(t *testing.T) {
 	}
 }
 
-// End-to-end recovery for a failed directory swap: after bothDirs clears the
-// target slot, a non-EXDEV rename failure must fall through to the backup
-// restore — original bundle back at target, relaunched, no helper env.
+// End-to-end recovery for a failed directory swap: after the original is moved
+// aside, a non-EXDEV rename failure must put it back — original bundle at
+// target, relaunched, no helper env.
 func TestRunHelperSwap_DirReplaceFails_RestoresBackup(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "App.app")
@@ -513,5 +513,106 @@ func TestRemoveTree_ReadOnlyDirectory(t *testing.T) {
 	}
 	if _, err := os.Lstat(tree); !os.IsNotExist(err) {
 		t.Errorf("tree still present: %v", err)
+	}
+}
+
+// undeletableEntry plants a read-only directory inside root, so
+// os.RemoveAll(root) deletes everything else and then fails — the partial
+// deletion that a file owned by another user, a locked file or a flaky volume
+// produces in a real install.
+func undeletableEntry(t *testing.T, root string) {
+	t.Helper()
+	readOnlyDir(t, filepath.Dir(root), filepath.Join(root, "Contents", "Resources", "locked"))
+}
+
+// A bundle that cannot be removed in full must not end the update with a
+// half-deleted application in the install slot. Removing the old bundle before
+// moving the new one in left exactly that whenever the removal stopped
+// partway, and the swap then "relaunched the intact original" — an emptied
+// directory — and deleted the backup.
+func TestRunHelperSwap_PartiallyUndeletableBundle_InstallsUpdate(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "App.app")
+	newPath := filepath.Join(dir, "App.app.new")
+	makeAppBundle(t, target, "old-bin")
+	makeAppBundle(t, newPath, "new-bin")
+	undeletableEntry(t, target)
+	withSwapRetryDelay(t, time.Millisecond)
+
+	var launches []string
+	l := &funcLauncher{fn: func(path string) error {
+		launches = append(launches, path)
+		if err := validatePayload(path); err != nil {
+			t.Errorf("launched a bundle that cannot run: %v", err)
+		}
+		return nil
+	}}
+
+	code := runHelperSwap(target, newPath, 0, filepath.Join(dir, "log"), instantWaiter, l)
+	if code != 0 {
+		t.Fatalf("code: %d (want 0 — the update installed)", code)
+	}
+	if got := readFile(t, filepath.Join(target, "Contents", "MacOS", "exe")); string(got) != "new-bin" {
+		t.Errorf("bundle exe: %q (want new-bin)", got)
+	}
+	if len(launches) != 1 || launches[0] != target {
+		t.Errorf("launcher calls: %+v (want one launch of %q)", launches, target)
+	}
+}
+
+// Restoring the backup must not depend on deleting whatever is in the slot:
+// the condition that broke the swap usually stops that deletion too. The
+// broken bundle is moved aside instead, which needs only the install
+// directory to be writable — as it already had to be for the backup.
+func TestRestoreFromBackup_PartiallyUndeletableTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "App.app")
+	backup := target + ".bak"
+	makeAppBundle(t, target, "broken-bin")
+	makeAppBundle(t, backup, "old-bin")
+	undeletableEntry(t, target)
+
+	l := &fakeLauncher{}
+	if err := restoreFromBackup(backup, target, l); err != nil {
+		t.Fatalf("restoreFromBackup: %v", err)
+	}
+	if got := readFile(t, filepath.Join(target, "Contents", "MacOS", "exe")); string(got) != "old-bin" {
+		t.Errorf("restored bundle exe: %q (want old-bin)", got)
+	}
+	if len(l.calls) != 1 || l.calls[0] != target {
+		t.Errorf("launcher calls: %+v (want one launch of %q)", l.calls, target)
+	}
+}
+
+// A cross-device copy of a bundle that fails partway leaves part of the payload
+// in the slot. The partial copy is cleared and the original moved back, so the
+// failure is an ordinary retryable one with the original intact.
+func TestReplaceTarget_DirCopyFailurePutsOriginalBack(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "App.app")
+	newPath := filepath.Join(dir, "App.app.new")
+	makeAppBundle(t, target, "old-bin")
+	makeAppBundle(t, newPath, "new-bin")
+	withRenameFunc(t, func(oldpath, newpath string) error {
+		return crossDeviceErr(oldpath, newpath)
+	})
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+	unreadable := filepath.Join(newPath, "Contents", "Resources", "unreadable")
+	writeFile(t, unreadable, []byte("x"))
+	if err := os.Chmod(unreadable, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	err := replaceTarget(target, newPath)
+	if err == nil || errors.Is(err, errTargetDisturbed) {
+		t.Fatalf("err = %v (want a plain, retryable failure)", err)
+	}
+	if got := readFile(t, filepath.Join(target, "Contents", "MacOS", "exe")); string(got) != "old-bin" {
+		t.Errorf("bundle exe: %q (want old-bin)", got)
+	}
+	if got := dirNames(t, dir); len(got) != 2 {
+		t.Errorf("dir entries: %q (want App.app and App.app.new only)", got)
 	}
 }
