@@ -10,9 +10,19 @@ func (a *linuxApp) GetFlags(options Options) map[string]any {
 }
 
 func (a *linuxApp) destroy() {
-	if !globalApplication.shouldQuit() {
-		return
+	reply := globalApplication.askShouldQuit(func(quit bool) {
+		if quit {
+			InvokeAsync(a.quit)
+		}
+	})
+	if reply == quitNow {
+		a.quit()
 	}
+}
+
+// quit shuts the application down and ends its main loop, once destroy's
+// request to quit has been granted.
+func (a *linuxApp) quit() {
 	globalApplication.cleanup()
 	appDestroy(a.application)
 }
