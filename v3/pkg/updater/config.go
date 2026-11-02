@@ -46,6 +46,14 @@ type Config struct {
 	// performs lengthy initialization before creating the Wails application.
 	HelperReadyTimeout time.Duration
 
+	// HelperLogPath is the file the swap helper logs to: every step of
+	// replacing the installed application, and why it stopped if it did. It is
+	// the only record of an update that failed, so point it at the
+	// application's own log directory to find it there. The file and its
+	// directory are created as needed, and each update is appended to it.
+	// Empty uses a per-process file in the system temporary directory.
+	HelperLogPath string
+
 	// Platform / Arch / Channel override the per-platform defaults passed to
 	// each Provider's Check. Leave empty to use runtime.GOOS / runtime.GOARCH
 	// and the provider's default channel.

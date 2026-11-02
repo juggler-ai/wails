@@ -449,15 +449,18 @@ func (u *Updater) Restart(_ context.Context) error {
 	if u.cfg != nil && u.cfg.HelperReadyTimeout > 0 {
 		timeout = u.cfg.HelperReadyTimeout
 	}
+	// Include PID so concurrent helpers (e.g. test runs, multiple installed
+	// Wails apps updating at the same time) don't interleave their logs.
+	logPath := filepath.Join(os.TempDir(), fmt.Sprintf("wails-update-%d.log", os.Getpid()))
+	if u.cfg != nil && u.cfg.HelperLogPath != "" {
+		logPath = u.cfg.HelperLogPath
+	}
 	ownedDir := u.stagingDir
 	u.stagingDir = ""
 	u.restarting = true
 	u.mu.Unlock()
 
 	target := bundleTarget(self)
-	// Include PID so concurrent helpers (e.g. test runs, multiple installed
-	// Wails apps updating at the same time) don't truncate each other's logs.
-	logPath := filepath.Join(os.TempDir(), fmt.Sprintf("wails-update-%d.log", os.Getpid()))
 	readyPath := filepath.Join(os.TempDir(), fmt.Sprintf("wails-update-%d-%d.ready", os.Getpid(), time.Now().UnixNano()))
 	_ = os.Remove(readyPath)
 	defer os.Remove(readyPath)
