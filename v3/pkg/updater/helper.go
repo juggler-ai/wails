@@ -425,11 +425,14 @@ type helperLog struct {
 	file *os.File
 }
 
+// openHelperLog appends to path, creating it and its directory as needed, so
+// a log shared across updates keeps the record of each one.
 func openHelperLog(path string) *helperLog {
 	if path == "" {
 		path = filepath.Join(os.TempDir(), fmt.Sprintf("wails-update-%d.log", os.Getpid()))
 	}
-	f, err := os.Create(path)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return &helperLog{w: os.Stderr}
 	}
