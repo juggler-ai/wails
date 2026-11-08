@@ -183,14 +183,15 @@ function primaryDown(event: MouseEvent): void {
         }
     }
 
-    if (resizeEdge) {
-        // Do not arm edge resize from synthesized presses observed on move/up:
-        // entering the window with the primary button already held should not
-        // steal another gesture into a resize.
-        if (event.type !== 'mousedown') {
-            return;
-        }
+    // Do not arm a drag or an edge resize from synthesized presses observed on
+    // move/up: entering the window with the primary button already held (for
+    // example while resizing an overlapping window) should not steal another
+    // gesture into a drag or resize of this one.
+    if (event.type !== 'mousedown') {
+        return;
+    }
 
+    if (resizeEdge) {
         // Ready to resize if the primary button was pressed for the first time.
         canResize = true;
         // Do not start drag operations when on resize edges.
